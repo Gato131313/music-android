@@ -77,6 +77,7 @@ class LibraryRepository(
     val libraryOrNull: StateFlow<Library?> = combine(raws.filterNotNull(), userEdits) { r, u ->
         val t0 = System.nanoTime()
         LibraryBuilder.build(r, u).also {
+            saveMemoSoon()
             Log.i(TAG, "biblioteca: ${it.songs.size} canciones, ${it.allVideos.size} videos en ${(System.nanoTime() - t0) / 1_000_000} ms")
         }
     }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, null)
@@ -92,8 +93,28 @@ class LibraryRepository(
         }
     }
 
+    private val memoFile = java.io.File(ctx.filesDir, "limpieza.tsv")
+    private var memoSaved = 0
+    private var memoJob: Job? = null
+
+    private fun saveMemoSoon() {
+        if (NameCleaner.memoSize() == memoSaved) return
+        memoJob?.cancel()
+        memoJob = scope.launch(Dispatchers.IO) {
+            delay(4000)
+            runCatching {
+                val tmp = java.io.File(memoFile.path + ".tmp")
+                tmp.writeText(NameCleaner.exportMemo())
+                tmp.renameTo(memoFile)
+                memoSaved = NameCleaner.memoSize()
+            }
+        }
+    }
+
     init {
         scope.launch(Dispatchers.IO) {
+            runCatching { if (memoFile.exists()) NameCleaner.importMemo(memoFile.readText()) }
+            memoSaved = NameCleaner.memoSize()
             val cached = db.media().all()
             if (cached.isNotEmpty()) raws.value = cached.map { it.toRaw() }
             if (scanner.hasAudioPermission() || scanner.hasVideoPermission()) refresh() else if (cached.isEmpty()) raws.value = emptyList()

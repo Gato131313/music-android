@@ -158,12 +158,30 @@ class NameCleanerTest {
     }
 
     @Test fun rendimientoConMilesDeArchivos() {
-        val raws = (1..3000L).map { raw(it, "Artista ${it % 400} - Canción número $it (Official Video) [HD].mp3") }
+        val artists = (0 until 450).map { "Artista Número $it" }
+        val rnd = java.util.Random(3)
+        val raws = (1..3000L).map { i ->
+            val a = artists[rnd.nextInt(artists.size)]
+            val t = "Canción $i Amor Noche"
+            when ((i % 6).toInt()) {
+                0 -> raw(i, "$a - $t (Official Video).mp3")
+                1 -> raw(i, "$t (Lyrics).mp3", "$t (Lyrics)", "$a - Topic")
+                2 -> raw(i, "${a.replace(' ', '_')}_-_${t.replace(' ', '_')}_[MV].mp3")
+                3 -> raw(i, "${i % 20 + 1} $t.mp3", t, a)
+                4 -> raw(i, "y2mate.com - $a - $t (Letra)_Snaptube.mp3")
+                else -> raw(i, "$a - $t (Official Music Video) HD.mp3", "$a - $t (Official Music Video) HD", a.replace(" ", "") + "VEVO")
+            }
+        }
         val t0 = System.nanoTime()
         val lib = LibraryBuilder.build(raws, UserEdits())
         val ms = (System.nanoTime() - t0) / 1_000_000
-        println("3000 archivos en $ms ms")
+        val t1 = System.nanoTime()
+        LibraryBuilder.build(raws, UserEdits(splitDecisions = mapOf("x" to true)))
+        val ms2 = (System.nanoTime() - t1) / 1_000_000
+        println("3000 archivos: primera vez $ms ms, reconstrucción $ms2 ms; artistas=${lib.artists.size}")
         assertEquals(3000, lib.songs.size)
-        assertTrue("tardó $ms ms", ms < 3000)
+        assertTrue("debe unir las variantes: ${lib.artists.size}", lib.artists.size <= 450)
+        assertTrue("tardó $ms ms", ms < 2500)
+        assertTrue("reconstruir tardó $ms2 ms", ms2 < 600)
     }
 }

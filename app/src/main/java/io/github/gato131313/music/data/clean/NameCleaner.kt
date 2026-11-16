@@ -81,37 +81,102 @@ object NameCleaner {
     private val HAS_LATIN = Regex("[A-Za-z]")
     private val CJK_WORD = Regex("[\\p{IsHangul}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHan}]")
 
+    private val ALL_ARTISTS = Regex("\\s*(?:,|;|/|\\bfeat\\.?|\\bft\\.?|featuring|\\s+x\\s+|\\s+&\\s+|\\s+y\\s+|\\s+and\\s+|\\bwith\\b)\\s*", RegexOption.IGNORE_CASE)
+    private val THE = Regex("^the\\s+")
+    private val AND = Regex("\\s(and|y|e|n|'n'|'n|n')\\s")
+    private val VERSION_SUFFIX = Regex("\\s+[-–—]\\s+(?:.*\\b(?:remaster(?:ed)?|version|versi[oó]n|edit|mix|live|en vivo|ao vivo)\\b.*)$", RegexOption.IGNORE_CASE)
+
+    // Memorias: la limpieza es pura (el mismo nombre siempre da lo mismo), así cada archivo se procesa una vez.
+    private val keyMemo = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val titleKeyMemo = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val cleanMemo = java.util.concurrent.ConcurrentHashMap<String, Result>()
+
+    /** Súbelo cuando cambien las reglas: invalida la memoria guardada en disco. */
+    const val RULES_VERSION = 3
+    private const val NUL = "\u0000"
+
+    fun memoSize() = cleanMemo.size + titleKeyMemo.size
+
+    /** Memoria en texto (una entrada por línea) para guardarla en el teléfono. */
+    fun exportMemo(): String {
+        val sb = StringBuilder("v$RULES_VERSION\n")
+        fun ok(s: String) = s.indexOf('\t') < 0 && s.indexOf('\n') < 0
+        for ((k, r) in cleanMemo) {
+            val parts = listOf(k, r.title, r.artist ?: NUL, r.album ?: NUL, r.splitCandidate?.first ?: NUL, r.splitCandidate?.second ?: NUL, if (r.didSplit) "1" else "0")
+            if (parts.all(::ok)) sb.append("c\t").append(parts.joinToString("\t")).append('\n')
+        }
+        for ((k, v) in titleKeyMemo) if (ok(k) && ok(v)) sb.append("t\t").append(k).append('\t').append(v).append('\n')
+        return sb.toString()
+    }
+
+    fun importMemo(text: String) {
+        val lines = text.split('\n')
+        if (lines.firstOrNull() != "v$RULES_VERSION") return
+        fun n(s: String) = if (s == NUL) null else s
+        for (i in 1 until lines.size) {
+            val p = lines[i].split('\t')
+            when {
+                p.size == 8 && p[0] == "c" -> cleanMemo.putIfAbsent(
+                    p[1],
+                    Result(p[2], n(p[3]), n(p[4]), if (n(p[5]) != null && n(p[6]) != null) p[5] to p[6] else null, p[7] == "1"),
+                )
+                p.size == 3 && p[0] == "t" -> titleKeyMemo.putIfAbsent(p[1], p[2])
+            }
+        }
+    }
+
     fun isUnknown(s: String?): Boolean = s == null || s.trim().lowercase() in UNKNOWN
 
     /** Quita la extensión y caracteres de relleno del nombre del archivo. */
     fun baseName(fileName: String): String = EXT.replace(fileName.trim(), "")
 
     /** Limpieza del título (sin separar artista). */
+    private const val EDGE_CHARS = "-–—_|·:,~•"
+    private fun trimEdges(s: String) = s.trim { it.isWhitespace() || it in EDGE_CHARS }
+
+    /** Aplica una regex anclada al final solo en la cola del texto (mucho más rápido en textos largos). */
+    private fun replaceTail(r: Regex, s: String, with: String = "", tail: Int = 64): String {
+        val m = r.find(s, (s.length - tail).coerceAtLeast(0)) ?: return s
+        return s.substring(0, m.range.first) + with + s.substring(m.range.last + 1)
+    }
+
+    private val TRAIL_HINTS = listOf("offic", "ofic", "video", "vídeo", "lyric", "letra", "m/v", "mv", "hd", "hq", "4k", "0p", "visuali", "snaptube", "vevo", "m v")
+    private const val QUOTE_CHARS = "\"'‘“「『«"
+
     fun cleanTitle(input: String): String {
-        var s = input.replace('_', ' ').replace('\u00A0', ' ')
-        s = LEADING_SITE.replace(s, "")
-        s = SNAPTUBE_ANY.replace(s, " ")
+        var s = input.replace('_', ' ').replace(' ', ' ')
+        var low = s.lowercase()
+        if (s.contains('.') || low.contains("snaptube") || low.contains("y2mate") || low.contains("savefrom") || low.contains("ytmp3")) s = LEADING_SITE.replace(s, "")
+        if (low.contains("snap")) s = SNAPTUBE_ANY.replace(s, " ")
         s = SPACES.replace(s, " ").trim()
-        for (r in TRACK_NUM) s = r.replace(s, "")
-        s = CJK_BRACKETS.replace(s) { m -> if (ONLY_TAGS.matches(m.groupValues[1]) || m.groupValues[1].isBlank()) " " else m.value }
+        if (s.firstOrNull()?.isDigit() == true) for (r in TRACK_NUM) s = r.replace(s, "")
+        if (s.any { it == '【' || it == '「' || it == '『' || it == '〖' }) {
+            s = CJK_BRACKETS.replace(s) { m -> if (ONLY_TAGS.matches(m.groupValues[1]) || m.groupValues[1].isBlank()) " " else m.value }
+        }
         // Paréntesis/corchetes que solo contienen ruido (repetir por anidados).
-        repeat(3) {
+        var guard = 0
+        while (guard++ < 3 && (s.contains('(') || s.contains('[') || s.contains('{'))) {
+            val before = s
             s = BRACKETS.replace(s) { m ->
                 val inner = m.groupValues[1]
                 if (inner.isBlank() || ONLY_TAGS.matches(inner)) " " else m.value
             }
+            if (before == s) break
         }
         s = SPACES.replace(s, " ").trim()
-        repeat(4) {
-            val before = s
-            s = TRAILING.replace(s, "")
-            s = TRAILING_TOPIC.replace(s, "")
-            s = EDGE.replace(s, "")
-            if (before == s) return@repeat
+        low = s.lowercase()
+        if (TRAIL_HINTS.any { low.contains(it) } || low.contains("topic")) {
+            guard = 0
+            while (guard++ < 4) {
+                val before = s
+                s = replaceTail(TRAILING, s)
+                if (s.lowercase().contains("topic")) s = replaceTail(TRAILING_TOPIC, s)
+                s = trimEdges(s)
+                if (before == s) break
+            }
         }
-        s = WRAP_QUOTES.find(s)?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: s
-        s = SPACES.replace(s, " ")
-        s = EDGE.replace(s, "").trim()
+        if (s.isNotEmpty() && s[0] in QUOTE_CHARS) s = WRAP_QUOTES.find(s)?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: s
+        s = trimEdges(SPACES.replace(s, " "))
         return s.ifBlank { input.trim() }
     }
 
@@ -119,26 +184,35 @@ object NameCleaner {
     fun cleanArtist(input: String?): String? {
         if (isUnknown(input)) return null
         var s = input!!.replace('_', ' ').trim()
-        s = SNAPTUBE_ANY.replace(s, " ").trim()
+        var low = s.lowercase()
+        if (low.contains("snap")) s = SNAPTUBE_ANY.replace(s, " ").trim()
         var wasVevo = false
-        repeat(3) {
+        var guard = 0
+        while (guard++ < 3) {
             val b = s
-            s = ARTIST_TOPIC.replace(s, "")
-            val v = ARTIST_VEVO.replace(s, "")
-            if (v != s) { wasVevo = true; s = v }
-            s = ARTIST_OFFICIAL.replace(s, "")
-            s = EDGE.replace(s, "").trim()
-            if (b == s) return@repeat
+            low = s.lowercase()
+            if (low.contains("topic")) s = replaceTail(ARTIST_TOPIC, s)
+            if (low.contains("vevo")) {
+                val v = replaceTail(ARTIST_VEVO, s)
+                if (v != s) { wasVevo = true; s = v }
+            }
+            if (low.contains("offic") || low.contains("ofic") || low.contains("canal")) s = replaceTail(ARTIST_OFFICIAL, s)
+            s = trimEdges(s)
+            if (b == s) break
         }
         // Quitar paréntesis (p. ej. "tripleS(트리플에스)") salvo que todo sea paréntesis.
-        val noParen = BRACKETS.replace(s, " ").let { SPACES.replace(it, " ").trim() }
-        if (noParen.isNotBlank()) s = noParen
+        if (s.contains('(') || s.contains('[') || s.contains('{')) {
+            val noParen = BRACKETS.replace(s, " ").let { SPACES.replace(it, " ").trim() }
+            if (noParen.isNotBlank()) s = noParen
+        }
         // Mezcla de palabras latinas y CJK: conservar las latinas ("IVE 아이브" -> "IVE").
-        val words = s.split(' ')
-        if (words.size > 1 && words.any { HAS_LATIN.containsMatchIn(it) && !CJK_WORD.containsMatchIn(it) } &&
-            words.any { CJK_WORD.containsMatchIn(it) && !HAS_LATIN.containsMatchIn(it) }
-        ) {
-            s = words.filter { !(CJK_WORD.containsMatchIn(it) && !HAS_LATIN.containsMatchIn(it)) }.joinToString(" ")
+        if (s.any { it.code >= 0x2E80 }) {
+            val words = s.split(' ')
+            if (words.size > 1 && words.any { HAS_LATIN.containsMatchIn(it) && !CJK_WORD.containsMatchIn(it) } &&
+                words.any { CJK_WORD.containsMatchIn(it) && !HAS_LATIN.containsMatchIn(it) }
+            ) {
+                s = words.filter { !(CJK_WORD.containsMatchIn(it) && !HAS_LATIN.containsMatchIn(it)) }.joinToString(" ")
+            }
         }
         if (wasVevo && !s.contains(' ')) s = splitCamel(s)
         s = SPACES.replace(s, " ").trim()
@@ -174,6 +248,12 @@ object NameCleaner {
         tagAlbum: String?,
         decision: Boolean? = null,
     ): Result {
+        val memoKey = fileName + "\u0001" + tagTitle + "\u0001" + tagArtist + "\u0001" + tagAlbum + "\u0001" + decision
+        cleanMemo[memoKey]?.let { return it }
+        return cleanRaw(fileName, tagTitle, tagArtist, tagAlbum, decision).also { if (cleanMemo.size < 50_000) cleanMemo[memoKey] = it }
+    }
+
+    private fun cleanRaw(fileName: String, tagTitle: String?, tagArtist: String?, tagAlbum: String?, decision: Boolean?): Result {
         val base = baseName(fileName)
         val rawTitle = if (isUnknown(tagTitle) || looksLikeFileName(tagTitle!!)) base else tagTitle
         val rawArtistTag = tagArtist?.trim()
@@ -253,7 +333,7 @@ object NameCleaner {
 
     /** Todos los artistas de un crédito ("A feat. B & C" -> [A, B, C]). */
     fun allArtists(artist: String): List<String> =
-        artist.split(Regex("\\s*(?:,|;|/|\\bfeat\\.?|\\bft\\.?|featuring|\\s+x\\s+|\\s+&\\s+|\\s+y\\s+|\\s+and\\s+|\\bwith\\b)\\s*", RegexOption.IGNORE_CASE))
+        artist.split(ALL_ARTISTS)
             .map { it.trim().trim('(', ')', '[', ']') }
             .filter { it.isNotBlank() }
 
@@ -271,10 +351,15 @@ object NameCleaner {
     /** Clave para comparar artistas/títulos: sin mayúsculas, acentos, signos ni sufijos. */
     fun key(s: String?): String {
         if (s == null) return ""
+        keyMemo[s]?.let { return it }
+        return keyRaw(s).also { if (keyMemo.size < 50_000) keyMemo[s] = it }
+    }
+
+    private fun keyRaw(s: String): String {
         var t = fold(s)
         t = t.replace('$', 's').replace("&", " n ").replace("+", " n ")
-        t = t.replace(Regex("^the\\s+"), "")
-        t = t.replace(Regex("\\s(and|y|e|n|'n'|'n|n')\\s"), " n ")
+        t = t.replace(THE, "")
+        t = t.replace(AND, " n ")
         val sb = StringBuilder(t.length)
         for (c in t) if (c.isLetterOrDigit()) sb.append(c)
         return sb.toString()
@@ -282,11 +367,16 @@ object NameCleaner {
 
     /** Clave de título para emparejar canción/video e importar CSV: sin (feat.), sin paréntesis, sin "- Remastered". */
     fun titleKey(title: String): String {
+        titleKeyMemo[title]?.let { return it }
+        return titleKeyRaw(title).also { if (titleKeyMemo.size < 50_000) titleKeyMemo[title] = it }
+    }
+
+    private fun titleKeyRaw(title: String): String {
         var t = cleanTitle(title)
         t = FEAT_SPLIT.replace(t, "")
         t = BRACKETS.replace(t, " ")
         t = CJK_BRACKETS.replace(t, " ")
-        t = t.replace(Regex("\\s+[-–—]\\s+(?:.*\\b(?:remaster(?:ed)?|version|versi[oó]n|edit|mix|live|en vivo|ao vivo)\\b.*)$", RegexOption.IGNORE_CASE), "")
+        t = t.replace(VERSION_SUFFIX, "")
         val k = key(t)
         return k.ifBlank { key(title) }
     }

@@ -34,6 +34,10 @@ object LibraryBuilder {
     fun build(raws: List<RawMedia>, user: UserEdits): Library {
         var hidden = 0
         val pres = ArrayList<Pre>(raws.size)
+        // Limpieza en paralelo (varios núcleos); el bucle de abajo ya la encuentra en memoria.
+        if (raws.size > 200) runCatching {
+            raws.parallelStream().forEach { r -> NameCleaner.clean(r.displayName, r.title, r.artist, r.album, user.splitDecisions[pathKey(r.path)]) }
+        }
         for (r in raws) {
             val pk = pathKey(r.path)
             if (pk in user.hiddenPaths || user.hiddenFolders.any { pk.startsWith(it) }) { hidden++; continue }
@@ -47,6 +51,8 @@ object LibraryBuilder {
             val pkey = resolveAlias(NameCleaner.artistKey(artist), user.aliases)
             pres += Pre(r, title, artist, album, pkey, e != null, if (e?.artist != null) null else c.splitCandidate)
         }
+
+        if (pres.size > 200) runCatching { pres.parallelStream().forEach { NameCleaner.titleKey(it.title) } }
 
         // 1) Nombre canónico por artista (variantes unidas por clave).
         val variants = HashMap<String, HashMap<String, Int>>()
@@ -105,22 +111,22 @@ object LibraryBuilder {
 
         // 3) Canción + Video.
         val paired = pair(audio, video, user.pairOverrides)
-        val songs = paired.first.sortedWith(compareBy({ NameCleaner.fold(it.title) }, { it.id }))
-        val allVideos = paired.second.sortedWith(compareBy({ NameCleaner.fold(it.title) }, { it.id }))
+        val songs = paired.first.sortedByFold { it.title }
+        val allVideos = paired.second.sortedByFold { it.title }
         val looseVideos = allVideos.filter { it.pairId == null }
 
         // 4) Agrupaciones.
         val artists = songs.filter { it.artist != null }.groupBy { it.artistKey }.map { (k, ts) ->
             Artist(k, canonical[k] ?: NameCleaner.primaryArtist(ts.first().artist!!), ts, ts.mapNotNull { it.album }.distinct().size)
-        }.sortedBy { NameCleaner.fold(it.name) }
+        }.sortedByFold { it.name }
 
         val albums = buildAlbums(songs, canonical)
         val folders = (songs + allVideos).groupBy { it.folder }.map { (f, ts) ->
             Folder(f, f.trimEnd('/').substringAfterLast('/').ifBlank { "Almacenamiento" }, ts.filter { !it.isVideo }, ts.filter { it.isVideo })
-        }.sortedBy { NameCleaner.fold(it.name) }
+        }.sortedByFold { it.name }
         val genres = songs.filter { it.genre != null }.groupBy { NameCleaner.key(it.genre) }.map { (k, ts) ->
             Genre(k, bestName(ts.groupingBy { it.genre!! }.eachCount()), ts)
-        }.sortedBy { NameCleaner.fold(it.name) }
+        }.sortedByFold { it.name }
 
         val review = ReviewData(
             merges = mergeSuggestions(variants, canonical, user),
@@ -129,6 +135,9 @@ object LibraryBuilder {
         )
         return Library(songs, looseVideos, allVideos, albums, artists, folders, genres, review, hidden)
     }
+
+    private inline fun <T> List<T>.sortedByFold(crossinline sel: (T) -> String): List<T> =
+        map { NameCleaner.fold(sel(it)) to it }.sortedBy { it.first }.map { it.second }
 
     private fun resolveAlias(key: String, aliases: Map<String, Pair<String, String?>>): String {
         var k = key
@@ -182,7 +191,7 @@ object LibraryBuilder {
             val name = bestName(ts.groupingBy { it.album!! }.eachCount())
             val artist = if (dk == "varios") "Varios artistas" else canonical[dk] ?: ts.first().displayArtist
             Album(k, name, artist, ts.first().id, ts.sortedBy { NameCleaner.fold(it.title) })
-        }.sortedBy { NameCleaner.fold(it.name) }
+        }.sortedByFold { it.name }
     }
 
     /** Une canción y video del mismo título y artista (ya limpios) con duración parecida. */
@@ -233,6 +242,8 @@ object LibraryBuilder {
         user: UserEdits,
     ): List<MergeSuggestion> {
         val keys = variants.keys.filter { it.length >= 3 }.sortedBy { it.length }
+        val hist = keys.associateWith { k -> IntArray(40).also { h -> for (ch in k) h[if (ch in 'a'..'z') ch - 'a' else if (ch in '0'..'9') 26 + (ch - '0') else 36 + (ch.code % 4)]++ } }
+        fun histDist(a: String, b: String): Int { val x = hist[a]!!; val y = hist[b]!!; var d = 0; for (i in x.indices) d += kotlin.math.abs(x[i] - y[i]); return d }
         val counts = variants.mapValues { it.value.values.sum() }
         val out = ArrayList<MergeSuggestion>()
         for (i in keys.indices) {
@@ -241,6 +252,8 @@ object LibraryBuilder {
                 val b = keys[j]
                 if (b.length - a.length > 8) break
                 if ((a to b) in user.rejected || (b to a) in user.rejected) continue
+                val contained = a.length >= 5 && (b.startsWith(a) || b.endsWith(a)) && b.length - a.length <= 8
+                if (!contained && histDist(a, b) > 4) continue
                 val similar = when {
                     a.length >= 9 && b.length - a.length <= 2 -> NameCleaner.levenshtein(a, b, 2) <= 2
                     a.length >= 5 && b.length - a.length <= 1 -> NameCleaner.levenshtein(a, b, 1) <= 1
