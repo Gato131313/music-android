@@ -321,7 +321,15 @@ class CapturasTest {
                 note("de vuelta a canción: isVideoMode=${MusicApp.graph.player.state.value.isVideoMode} " + session())
             }
         }
-        step("letra") { click(By.desc("Letra")); shot("54_letra", 6000); click(By.desc("Ocultar letra")) }
+        step("letra") {
+            val real = lib.songs.firstOrNull { it.title == "Tu Falta De Querer" }
+            if (real != null) inst.runOnMainSync { MusicApp.graph.player.play(listOf(real), 0) }
+            Thread.sleep(2500)
+            inst.runOnMainSync { MusicApp.graph.player.seekTo(60_000) }
+            click(By.desc("Letra")); shot("54_letra", 8000)
+            note("letra de: ${real?.title} — ${real?.displayArtist} (tiene video: ${real?.hasVideo})")
+            click(By.desc("Ocultar letra"))
+        }
         step("conductor") { launch("driver"); shot("55_conductor", 2500) }
         step("widgets") { launch("widgets"); shot("56_widgets", 1500) }
         saveLog("informe5.txt")

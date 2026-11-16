@@ -60,6 +60,11 @@ adb shell am start -n $ACT > /dev/null; sleep 4
 adb shell dumpsys gfxinfo $B reset > /dev/null
 for i in $(seq 1 8); do adb shell input swipe 540 1900 540 700 150; sleep 0.5; adb shell input swipe 540 700 540 1900 150; sleep 0.5; done
 adb shell dumpsys gfxinfo $B | grep -E "Total frames|Janky|percentile|Slow UI|deadline" > $OUT/fluidez_inicio.txt
+# Referencia: la app de Ajustes de Android en el mismo emulador
+adb shell am start -a android.settings.SETTINGS > /dev/null; sleep 4
+adb shell dumpsys gfxinfo com.android.settings reset > /dev/null
+for i in $(seq 1 10); do adb shell input swipe 540 1900 540 600 150; sleep 0.5; adb shell input swipe 540 600 540 1900 150; sleep 0.5; done
+adb shell dumpsys gfxinfo com.android.settings | grep -E "Total frames|Janky|percentile|Slow UI|deadline" > $OUT/fluidez_referencia_ajustes_android.txt
 adb shell dumpsys meminfo $B | grep -E "Java Heap|Native Heap|Code:|Private Other|TOTAL PSS" > $OUT/memoria_release.txt
 adb shell dumpsys batterystats --charged $B | grep -iE "cpu|wake" | head -20 > $OUT/bateria_release.txt || true
 exit 0

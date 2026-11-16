@@ -193,6 +193,9 @@ def main():
     for i in range(130):
         d = random.choice(DURS[:4])
         copy(f"{TPL}/v{d}.mp4", f"{OUT}/DCIM/Camera/VID_2025{(i % 12) + 1:02d}{(i % 27) + 1:02d}_{100000 + i * 37}.mp4"); vids += 1
+    # Una canción real para comprobar letras sincronizadas y su pareja de video
+    write_mp3(f"{OUT}/Snaptube/Audio/Mon Laferte - Tu Falta De Querer (Video Oficial).mp3", 274)
+    copy(f"{TPL}/v274.mp4", f"{OUT}/Snaptube/Video/Mon Laferte - Tu Falta De Querer (Video Oficial).mp4")
     # Notas de voz (deben ignorarse)
     for i in range(6):
         copy(f"{TPL}/a62.m4a", f"{OUT}/Recordings/Voz {i}.m4a")
