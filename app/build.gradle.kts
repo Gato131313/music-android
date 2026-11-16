@@ -55,6 +55,15 @@ android {
         debug {
             applicationIdSuffix = ".debug"
         }
+        // Igual al APK final pero firmado con la llave de depuración: para medir rendimiento real en el CI
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            applicationIdSuffix = ".bench"
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+            isProfileable = true
+        }
     }
 
     compileOptions {
