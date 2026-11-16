@@ -7,7 +7,13 @@ OUT=out
 mkdir -p $OUT
 adb wait-for-device
 adb shell getprop ro.build.version.release
-for d in tools/testlib/*; do adb push "$d" /sdcard/ >/dev/null; done
+# Esperar a que el almacenamiento compartido acepte archivos (tras el arranque tarda un poco).
+for i in $(seq 1 60); do
+  if adb shell "touch /sdcard/Download/.probe && rm /sdcard/Download/.probe" 2>/dev/null; then echo "almacenamiento listo ($i)"; break; fi
+  sleep 3
+done
+adb shell wm dismiss-keyguard || true
+for d in tools/testlib/*; do adb push "$d" /sdcard/ | tail -1; done
 adb shell content call --uri content://media --method scan_volume --arg external_primary || true
 sleep 25
 echo "audio en MediaStore: $(adb shell content query --uri content://media/external/audio/media --projection _id | grep -c Row)" | tee $OUT/mediastore.txt
@@ -17,7 +23,7 @@ adb install -r -g apks/androidTest/debug/app-debug-androidTest.apk
 adb logcat -c
 adb shell am instrument -w -e class io.github.gato131313.music.CapturasTest $PKG.test/androidx.test.runner.AndroidJUnitRunner | tee $OUT/instrument.txt
 adb pull /data/local/tmp/capturas $OUT/ || true
-adb pull /sdcard/Android/data/$PKG/files/informe.txt $OUT/informe.txt || true
+adb pull /sdcard/Android/data/$PKG/files/ $OUT/informes || true
 adb logcat -d -s CAPTURAS > $OUT/capturas_log.txt
 adb logcat -d > $OUT/logcat.txt
 adb shell dumpsys meminfo $PKG > $OUT/meminfo.txt || true

@@ -174,8 +174,8 @@ fun HomeScreen(a: UiActions, openDrawer: () -> Unit, onNewPlaylist: () -> Unit, 
         }
         // Barra superior de cristal: ☰  Música  🔍
         Row(
-            Modifier.fillMaxWidth().glass(haze, RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
-                .windowInsetsPadding(WindowInsets.statusBars).height(60.dp).onSizeChanged { barH = it.height }.padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().onSizeChanged { barH = it.height }.glass(haze, RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
+                .windowInsetsPadding(WindowInsets.statusBars).height(60.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = openDrawer) { Icon(Icons.Rounded.Menu, "Menú", tint = c.text) }

@@ -185,8 +185,8 @@ fun GlassScaffold(
             content(PaddingValues(top = with(density) { barH.toDp() }, bottom = LocalBottomInset.current))
         }
         Row(
-            Modifier.fillMaxWidth().glass(haze, RoundedCornerShape(0.dp)).windowInsetsPadding(WindowInsets.statusBars)
-                .height(58.dp).onSizeChanged { barH = it.height + 0 }.padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().onSizeChanged { barH = it.height }.glass(haze, RoundedCornerShape(0.dp)).windowInsetsPadding(WindowInsets.statusBars)
+                .height(58.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (onBack != null) IconButton(onClick = onBack) { Icon(navIcon, "Atrás", tint = c.text) } else Spacer(Modifier.width(12.dp))
