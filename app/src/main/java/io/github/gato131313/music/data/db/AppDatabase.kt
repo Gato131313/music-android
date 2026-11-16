@@ -177,6 +177,7 @@ interface StatsDao {
     @Upsert suspend fun upsertStat(s: PlayStat)
     @Upsert suspend fun upsertStats(s: List<PlayStat>)
     @Insert suspend fun insertEvent(e: PlayEvent)
+    @Query("UPDATE play_event SET ms = ms + :extra WHERE id = (SELECT MAX(id) FROM play_event WHERE `key` = :key)") suspend fun addToLastEvent(key: String, extra: Long)
     @Insert suspend fun insertEvents(e: List<PlayEvent>)
     @Query("SELECT * FROM play_event WHERE at >= :from AND at < :to ORDER BY at") suspend fun events(from: Long, to: Long): List<PlayEvent>
     @Query("SELECT * FROM play_event ORDER BY at") suspend fun allEvents(): List<PlayEvent>

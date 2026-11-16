@@ -31,7 +31,14 @@ data class Settings(
     val coverStyle: String = "disco",
     /** Fusión entre canciones (0 = apagada). */
     val crossfadeSec: Int = 6,
+    /** Velocidad 0.5–2.0 y tono en semitonos (independientes). */
+    val speed: Float = 1f,
+    val pitchSemis: Float = 0f,
     val minDurationSec: Int = 30,
+    /** Efectos de sonido globales. */
+    val fx: io.github.gato131313.music.fx.FxParams = io.github.gato131313.music.fx.FxParams(),
+    /** Preset por salida: "audifonos" / "bocina" / "bluetooth" -> nombre de preset (vacío = el global). */
+    val fxByOutput: Map<String, String> = emptyMap(),
     /** Al haber pareja, abrir en modo Video. */
     val preferVideo: Boolean = false,
     val translateLyrics: Boolean = true,

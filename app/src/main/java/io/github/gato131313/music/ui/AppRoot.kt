@@ -88,6 +88,26 @@ import io.github.gato131313.music.ui.screens.dec
 import io.github.gato131313.music.ui.screens.libraryState
 import io.github.gato131313.music.ui.theme.LocalAppColors
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.haze
+import io.github.gato131313.music.ui.player.MiniPlayer
+import io.github.gato131313.music.ui.player.PlayerCallbacks
+import io.github.gato131313.music.ui.player.PlayerScreen
+import io.github.gato131313.music.ui.player.SleepTimerDialog
+
+/** Peticiones de navegación desde fuera de Compose (notificación, widgets). */
+object NavRequests { val route = MutableStateFlow<String?>(null) }
 
 data class DrawerItem(val icon: ImageVector, val label: String, val route: String)
 
@@ -121,14 +141,31 @@ fun AppRoot(startRoute: String? = null) {
     var editing by remember { mutableStateOf<Track?>(null) }
     var newPlaylist by remember { mutableStateOf(false) }
     val lib = libraryState()
+    val playerOpen = rememberSaveable { mutableStateOf(startRoute == "player") }
+    val sleepOpen = remember { mutableStateOf(false) }
+    val ui by g.player.state.collectAsState()
+    val rootHaze = remember { HazeState() }
+    var miniH by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    LaunchedEffect(Unit) { g.player.connect() }
 
     val actions = remember(nav) {
         object : UiActions {
             override fun play(queue: List<Track>, index: Int, shuffle: Boolean) {
-                Toast.makeText(ctx, "Reproduciendo: ${queue.getOrNull(index)?.title}", Toast.LENGTH_SHORT).show()
+                g.player.play(queue, index, shuffle)
+                if (queue.getOrNull(index)?.isVideo == true) playerOpen.value = true
             }
+            override fun currentId(): Long? = g.player.state.value.current?.id
             override fun menu(track: Track, context: List<Track>) { editing = track }
-            override fun navigate(route: String) = handleRoute(route, nav, ctx) { scope.launch { drawer.close() } }
+            override fun navigate(route: String) {
+                when (route) {
+                    "player" -> playerOpen.value = true
+                    "action/shuffle" -> g.player.shuffleAll()
+                    "action/sleep" -> sleepOpen.value = true
+                    else -> handleRoute(route, nav, ctx) { scope.launch { drawer.close() } }
+                }
+            }
             override fun back() { if (!nav.popBackStack()) Unit }
         }
     }
@@ -137,8 +174,10 @@ fun AppRoot(startRoute: String? = null) {
         drawerState = drawer,
         drawerContent = { AppDrawer { item -> scope.launch { drawer.close() }; actions.navigate(item.route) } },
     ) {
-        CompositionLocalProvider(LocalBottomInset provides 16.dp) {
-            NavHost(nav, startDestination = startRoute ?: "home", modifier = Modifier.fillMaxSize().background(LocalAppColors.current.bg)) {
+        val bottomInset = if (ui.current != null) with(density) { miniH.toDp() } + navBottom + 8.dp else navBottom + 8.dp
+        Box(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalBottomInset provides bottomInset) {
+            NavHost(nav, startDestination = startRoute?.takeIf { it != "player" } ?: "home", modifier = Modifier.fillMaxSize().background(LocalAppColors.current.bg).haze(rootHaze)) {
                 composable("home") {
                     HomeScreen(actions, openDrawer = { scope.launch { drawer.open() } }, onNewPlaylist = { newPlaylist = true }, onListMenu = { })
                 }
@@ -171,10 +210,23 @@ fun AppRoot(startRoute: String? = null) {
                     val pls by g.user.playlists.collectAsState()
                     TrackListScreen(pls.firstOrNull { p -> p.id == id }?.name ?: "Playlist", items.mapNotNull { i -> lib.byKey[i.key] }, actions)
                 }
+                composable("effects") { io.github.gato131313.music.ui.screens.EffectsScreen(actions) }
                 composable("soon/{name}") { ComingSoon(dec(it.arguments?.getString("name") ?: ""), actions) }
             }
         }
+        MiniPlayer(
+            rootHaze, onOpen = { playerOpen.value = true }, onQueue = { playerOpen.value = true },
+            modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 6.dp).onSizeChanged { miniH = it.height },
+        )
+        AnimatedVisibility(playerOpen.value, enter = slideInVertically(tween(320)) { it }, exit = slideOutVertically(tween(260)) { it }) {
+            PlayerScreen(PlayerCallbacks(onClose = { playerOpen.value = false }, onEffects = { playerOpen.value = false; actions.navigate("effects") }, onMenu = { t -> editing = t }))
+        }
+        }
     }
+    LaunchedEffect(Unit) {
+        NavRequests.route.collect { r -> if (r != null) { NavRequests.route.value = null; actions.navigate(r) } }
+    }
+    if (sleepOpen.value) SleepTimerDialog { sleepOpen.value = false }
     editing?.let { t -> EditTrackDialog(t) { editing = null } }
     if (newPlaylist) TextInputDialog("Nueva playlist", "", onDismiss = { newPlaylist = false }) { name ->
         newPlaylist = false
@@ -189,7 +241,7 @@ private fun handleRoute(route: String, nav: NavHostController, ctx: android.cont
             Toast.makeText(ctx, "Escaneando medios…", Toast.LENGTH_SHORT).show()
             g.library.refreshAsync(systemScan = true)
         }
-        "action/shuffle", "action/sleep", "effects", "themes", "widgets", "driver", "hidden", "stats", "import", "settings", "playlists" ->
+        "action/shuffle", "action/sleep", "themes", "widgets", "driver", "hidden", "stats", "import", "settings", "playlists" ->
             nav.navigate("soon/" + java.net.URLEncoder.encode(route, "UTF-8"))
         else -> nav.navigate(route) { launchSingleTop = true }
     }

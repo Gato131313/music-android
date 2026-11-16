@@ -23,6 +23,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(EXTRA_ROUTE)?.let { io.github.gato131313.music.ui.NavRequests.route.value = it }
+    }
+
     override fun onResume() {
         super.onResume()
         MusicApp.graph.library.onPermissionsChanged()

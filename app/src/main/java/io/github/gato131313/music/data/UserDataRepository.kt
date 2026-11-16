@@ -30,6 +30,19 @@ class UserDataRepository(private val db: AppDatabase, private val scope: Corouti
 
     val recent: StateFlow<List<RecentKey>> = db.stats().recent().stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    val songFx: StateFlow<Map<String, String>> = db.user().songFx().map { l -> l.associate { it.key to it.preset } }
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    val eqPresets: StateFlow<Map<String, List<Float>>> = db.user().eqPresets().map { l ->
+        l.associate { p -> p.name to p.gains.split(",").mapNotNull { it.trim().toFloatOrNull() } }
+    }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    suspend fun saveEqPreset(name: String, bands: List<Float>) = db.user().upsertEqPreset(io.github.gato131313.music.data.db.EqPreset(name.trim(), bands.joinToString(",")))
+    suspend fun deleteEqPreset(name: String) = db.user().deleteEqPreset(name)
+    suspend fun setSongPreset(key: String, preset: String?) {
+        if (preset == null) db.user().deleteSongFx(key) else db.user().upsertSongFx(io.github.gato131313.music.data.db.SongFx(key, preset))
+    }
+
     val playlists: StateFlow<List<PlaylistWithCount>> = db.playlists().playlists().stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     init {
@@ -55,6 +68,12 @@ class UserDataRepository(private val db: AppDatabase, private val scope: Corouti
         val s = db.stats().stat(t.key) ?: PlayStat(t.key)
         db.stats().upsertStat(s.copy(plays = s.plays + 1, lastPlayed = at, msPlayed = s.msPlayed + msPlayed))
         db.stats().insertEvent(PlayEvent(key = t.key, at = at, ms = msPlayed, title = t.title, artist = t.artist))
+    }
+
+    suspend fun addListenTime(t: Track, extraMs: Long) {
+        val s = db.stats().stat(t.key) ?: return
+        db.stats().upsertStat(s.copy(msPlayed = s.msPlayed + extraMs))
+        db.stats().addToLastEvent(t.key, extraMs)
     }
 
     suspend fun recordSkip(t: Track) {

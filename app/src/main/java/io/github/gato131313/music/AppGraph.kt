@@ -5,6 +5,10 @@ import io.github.gato131313.music.data.LibraryRepository
 import io.github.gato131313.music.data.UserDataRepository
 import io.github.gato131313.music.data.db.AppDatabase
 import io.github.gato131313.music.data.prefs.SettingsStore
+import io.github.gato131313.music.playback.PlaybackHub
+import io.github.gato131313.music.fx.FxEngine
+import io.github.gato131313.music.fx.FxController
+import io.github.gato131313.music.playback.PlayerController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,4 +20,8 @@ class AppGraph(val app: Application) {
     val settings = SettingsStore(app, scope)
     val library = LibraryRepository(app, db, settings, scope)
     val user = UserDataRepository(db, scope)
+    val hub = PlaybackHub(app, scope)
+    val fx = FxEngine(app, scope).also { e -> hub.processorsFactory = { arrayOf(e.newProcessor()) } }
+    val player = PlayerController(app, this)
+    val fxController = FxController(this)
 }
