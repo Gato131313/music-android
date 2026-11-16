@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -135,9 +136,11 @@ fun PlayerScreen(cb: PlayerCallbacks) {
     val track = ui.current
     val palette = rememberCoverPalette(track)
     var showQueue by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(g.settings.value.showLyricsDefault) }
     var showSpeed by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
     var dragY by remember { mutableFloatStateOf(0f) }
+    val clock = rememberVizClock(ui.isPlaying)
     BackHandler { if (showQueue) showQueue = false else cb.onClose() }
 
     Box(
@@ -149,7 +152,7 @@ fun PlayerScreen(cb: PlayerCallbacks) {
         if (ui.isVideoMode || track?.isVideo == true) {
             Box(Modifier.fillMaxSize().background(Color.Black))
         } else {
-            LiveBackdrop(palette, ui.isPlaying && settings.style != "solido", Modifier.fillMaxSize())
+            LiveBackdrop(palette, ui.isPlaying && settings.style != "solido", Modifier.fillMaxSize()) { (clock.energy * 0.7f + clock.pulse * 0.5f).coerceAtMost(1f) }
         }
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).windowInsetsPadding(WindowInsets.navigationBars)) {
             // Arriba: cerrar, título/artista, efectos y cola
@@ -166,8 +169,12 @@ fun PlayerScreen(cb: PlayerCallbacks) {
             }
             // Centro: portada / video / cola
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                AnimatedContent(showQueue, transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(150)) }, label = "centro") { q ->
-                    if (q) QueuePanel(ui, onPlay = { g.player.playAt(it) }) else Stage(ui, track, palette, settings.coverStyle)
+                AnimatedContent(if (showQueue) 1 else if (showLyrics && track != null && !ui.isVideoMode && !track.isVideo) 2 else 0, transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(150)) }, label = "centro") { q ->
+                    when (q) {
+                        1 -> QueuePanel(ui, onPlay = { g.player.playAt(it) })
+                        2 -> LyricsPanel(track!!, palette.glow)
+                        else -> Stage(ui, track, palette, settings.coverStyle, clock)
+                    }
                 }
             }
             // Fila: favorito, tono/velocidad, repetir, temporizador, menú
@@ -183,6 +190,9 @@ fun PlayerScreen(cb: PlayerCallbacks) {
                         when (ui.repeat) { Player.REPEAT_MODE_ONE -> "Repetir una"; Player.REPEAT_MODE_ALL -> "Repetir todo"; else -> "Repetir: no" },
                         tint = if (ui.repeat == Player.REPEAT_MODE_OFF) Color.White.copy(alpha = 0.55f) else palette.glow,
                     )
+                }
+                IconButton(onClick = { showLyrics = !showLyrics; showQueue = false }) {
+                    Icon(Icons.Rounded.Lyrics, if (showLyrics) "Ocultar letra" else "Letra", tint = if (showLyrics) palette.glow else Color.White)
                 }
                 Spacer(Modifier.weight(1f))
                 if (track?.hasVideo == true) VideoSwitch(ui.isVideoMode) { g.player.switchVideoMode(it) }
@@ -294,7 +304,7 @@ fun fmtSpeed(s: Float): String = (if (s == s.roundToInt().toFloat()) "%.1f".form
 /** Portada o video en el centro. */
 @OptIn(UnstableApi::class)
 @Composable
-private fun Stage(ui: PlayerUi, track: Track?, palette: CoverPalette, style: String) {
+private fun Stage(ui: PlayerUi, track: Track?, palette: CoverPalette, style: String, clock: VizClock) {
     if (ui.isVideoMode || track?.isVideo == true) {
         val controller = MusicApp.graph.player.controller
         AndroidView(
@@ -312,7 +322,11 @@ private fun Stage(ui: PlayerUi, track: Track?, palette: CoverPalette, style: Str
         )
         return
     }
-    CoverArt(track, ui.isPlaying, palette, style)
+    when (style) {
+        "cuadrada" -> SquareCover(track, ui.isPlaying, clock)
+        "aurora" -> AuroraCover(track, ui.isPlaying, palette, clock)
+        else -> DiscCover(track, ui.isPlaying, palette, clock)
+    }
 }
 
 @Composable

@@ -75,6 +75,12 @@ class PlaybackService : MediaSessionService() {
     private var counted = false
     private var lastTick = 0L
     private var lastSave = 0L
+    private var widgetJob: kotlinx.coroutines.Job? = null
+
+    private fun refreshWidget() {
+        widgetJob?.cancel()
+        widgetJob = scope.launch { kotlinx.coroutines.delay(400); io.github.gato131313.music.widget.MusicWidget.refresh(this@PlaybackService) }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -142,6 +148,7 @@ class PlaybackService : MediaSessionService() {
             accMs = 0
             counted = false
             saveQueue()
+            refreshWidget()
         }
 
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
@@ -150,6 +157,7 @@ class PlaybackService : MediaSessionService() {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             lastTick = System.currentTimeMillis()
+            refreshWidget()
             if (!isPlaying) {
                 saveQueue()
                 crossfader.onPaused()
