@@ -54,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -197,7 +199,8 @@ fun HomeScreen(a: UiActions, openDrawer: () -> Unit, onNewPlaylist: () -> Unit, 
 private fun CategoryTile(icon: ImageVector, label: String, count: Int, modifier: Modifier, onClick: () -> Unit) {
     val c = LocalAppColors.current
     Column(
-        modifier.aspectRatio(1.05f).glassPanel(RoundedCornerShape(20.dp)).clickable(onClick = onClick).padding(8.dp),
+        modifier.aspectRatio(1.05f).glassPanel(RoundedCornerShape(20.dp)).clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = "$label ($count)" }.padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
         Icon(icon, null, tint = c.accent, modifier = Modifier.size(38.dp))

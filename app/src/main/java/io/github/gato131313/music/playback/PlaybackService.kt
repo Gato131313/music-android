@@ -333,6 +333,7 @@ class PlaybackService : MediaSessionService() {
             val t = tail ?: return disarm()
             if (t.playbackState != Player.STATE_READY) return disarm()
             t.play()
+            Log.i(TAG, "fusión: empieza (${fadeLen} ms) en ${player.currentPosition} ms")
             autoTransition = true
             player.volume = 0f
             player.seekToNextMediaItem()
@@ -341,6 +342,7 @@ class PlaybackService : MediaSessionService() {
         }
 
         private fun finish() {
+            if (state == 2) Log.i(TAG, "fusión: termina")
             tail?.stop()
             tail?.clearMediaItems()
             player.volume = 1f

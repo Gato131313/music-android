@@ -49,7 +49,7 @@ class CapturasTest {
         return true
     }
 
-    private fun tile(name: String) = By.text(Pattern.compile("^" + Pattern.quote(name) + "([\\s,].*)?$", Pattern.DOTALL))
+    private fun tile(name: String) = By.descStartsWith("$name (")
 
     /** Cierra diálogos del sistema ("X no responde") que en emuladores lentos tapan la pantalla. */
     private fun dismissSystemDialogs() {
@@ -217,17 +217,16 @@ class CapturasTest {
             d.executeShellCommand("am start -n $pkg/io.github.gato131313.music.MainActivity --es route player")
             Thread.sleep(2500)
             val a = session()
-            val w = d.displayWidth
-            val clock = d.findObject(By.text(SessionProbe.CLOCK))
-            if (clock != null) d.click((w * 0.955).toInt(), clock.visibleBounds.top - 28)
-            var players = ""
-            repeat(12) {
-                Thread.sleep(1000)
-                val n = d.executeShellCommand("dumpsys audio").lines().count { it.contains("USAGE_MEDIA") && it.contains("started") }
-                players += "$n "
+            d.executeShellCommand("logcat -c")
+            inst.runOnMainSync {
+                val c = MusicApp.graph.player.controller
+                if (c != null && c.duration > 20_000) c.seekTo(c.duration - 9_000)
             }
-            note("fusion: antes=$a despues=${session()} reproductores_por_segundo=[$players]")
-            shot("27_tras_fusion", 300)
+            Thread.sleep(3500)
+            shot("27_durante_fusion", 200)
+            Thread.sleep(9000)
+            val log = d.executeShellCommand("logcat -d -s PlaybackService:I").lines().filter { it.contains("fusión") }
+            note("fusion: antes=$a despues=${session()} registro=${log.joinToString(" | ") { it.substringAfter("PlaybackService").trim() }}")
         }
         step("logs2") {
             val lc = d.executeShellCommand("logcat -d -s PlaybackService:W AndroidRuntime:E ExoPlayerImplInternal:E")
@@ -311,10 +310,14 @@ class CapturasTest {
         }
         step("video") {
             if (paired.isNotEmpty()) {
-                click(By.text("Video")); shot("53_modo_video", 4000)
-                note("modo video: " + session())
-                click(By.text("Canción")); Thread.sleep(1500)
-                note("de vuelta a canción: " + session())
+                val before = MusicApp.graph.player.position()
+                inst.runOnMainSync { MusicApp.graph.player.switchVideoMode(true) }
+                shot("53_modo_video", 4000)
+                val ui = MusicApp.graph.player.state.value
+                note("modo video: isVideoMode=${ui.isVideoMode} archivo=${ui.playingFile?.fileName} posicion antes=$before despues=${MusicApp.graph.player.position()} " + session())
+                inst.runOnMainSync { MusicApp.graph.player.switchVideoMode(false) }
+                Thread.sleep(2000)
+                note("de vuelta a canción: isVideoMode=${MusicApp.graph.player.state.value.isVideoMode} " + session())
             }
         }
         step("letra") { click(By.desc("Letra")); shot("54_letra", 6000); click(By.desc("Ocultar letra")) }
@@ -341,6 +344,8 @@ class CapturasTest {
             val f = java.io.File(ctx.cacheDir, "reproducciones.csv").apply { writeText(sb.toString()) }
             val r = kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, android.net.Uri.fromFile(f)) }
             note("importar: filas=${r.rows} empatadas=${r.plays.size} favoritos=${r.favorites.size} sin_empatar=${r.unmatched.size}")
+            r.unmatched.forEach { u -> note("  sin empatar: ${u.title} / ${u.artist} -> claves ${io.github.gato131313.music.data.backup.ImportCore.rowKeys(u)}") }
+            pick.take(40).forEach { t -> if (r.plays[t.key] == null) note("  canción no empatada: ${t.title} / ${t.artist} claves=${t.titleKey}|${t.artistKey}") }
             launch("import"); shot("60_importar", 2500)
             launch("smart/mas"); shot("61_mas_reproducidas", 2500)
             launch("stats"); Thread.sleep(2000); click(By.text("Todo")); shot("62_estadisticas", 2500)

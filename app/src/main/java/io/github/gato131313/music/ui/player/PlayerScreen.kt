@@ -299,7 +299,15 @@ private fun ProgressBar(ui: PlayerUi, speed: Float, accent: Color) {
     }
 }
 
-fun fmtSpeed(s: Float): String = (if (s == s.roundToInt().toFloat()) "%.1f".format(s) else "%.2f".format(s)).replace(",", ".") + "x"
+fun fmtSpeed(s: Float): String {
+    val r = (s * 100).roundToInt()
+    val txt = when {
+        r % 100 == 0 -> "${r / 100}.0"
+        r % 10 == 0 -> "${r / 100}.${(r % 100) / 10}"
+        else -> "${r / 100}.${(r % 100).toString().padStart(2, '0')}"
+    }
+    return txt + "x"
+}
 
 /** Portada o video en el centro. */
 @OptIn(UnstableApi::class)

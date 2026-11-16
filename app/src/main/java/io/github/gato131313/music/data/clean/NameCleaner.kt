@@ -125,10 +125,34 @@ object NameCleaner {
         }
     }
 
+    private val AND_WORDS = setOf("and", "y", "e", "n", "'n'", "'n", "n'")
+    private fun hasFeat(low: String) = low.contains("feat") || low.contains("ft") || low.contains("con ") || low.contains("with ") || low.contains("prod")
+
     fun isUnknown(s: String?): Boolean = s == null || s.trim().lowercase() in UNKNOWN
 
     /** Quita la extensión y caracteres de relleno del nombre del archivo. */
-    fun baseName(fileName: String): String = EXT.replace(fileName.trim(), "")
+    private val EXTS = setOf("mp3", "m4a", "aac", "flac", "wav", "ogg", "oga", "opus", "wma", "amr", "mp4", "m4v", "mkv", "webm", "3gp", "avi", "mov", "ts")
+
+    private fun extOf(s: String): String? {
+        val i = s.lastIndexOf('.')
+        if (i < 0 || s.length - i > 6) return null
+        return s.substring(i + 1).lowercase().takeIf { it in EXTS }
+    }
+
+    /** Junta espacios repetidos (más rápido que una regex). */
+    private fun collapse(s: String): String {
+        val sb = StringBuilder(s.length)
+        var sp = false
+        for (c in s) {
+            if (c.isWhitespace()) { if (!sp) sb.append(' '); sp = true } else { sb.append(c); sp = false }
+        }
+        return sb.toString()
+    }
+
+    fun baseName(fileName: String): String {
+        val t = fileName.trim()
+        return if (extOf(t) != null) t.substring(0, t.lastIndexOf('.')) else t
+    }
 
     /** Limpieza del título (sin separar artista). */
     private const val EDGE_CHARS = "-–—_|·:,~•"
@@ -148,7 +172,7 @@ object NameCleaner {
         var low = s.lowercase()
         if (s.contains('.') || low.contains("snaptube") || low.contains("y2mate") || low.contains("savefrom") || low.contains("ytmp3")) s = LEADING_SITE.replace(s, "")
         if (low.contains("snap")) s = SNAPTUBE_ANY.replace(s, " ")
-        s = SPACES.replace(s, " ").trim()
+        s = collapse(s).trim()
         if (s.firstOrNull()?.isDigit() == true) for (r in TRACK_NUM) s = r.replace(s, "")
         if (s.any { it == '【' || it == '「' || it == '『' || it == '〖' }) {
             s = CJK_BRACKETS.replace(s) { m -> if (ONLY_TAGS.matches(m.groupValues[1]) || m.groupValues[1].isBlank()) " " else m.value }
@@ -163,7 +187,7 @@ object NameCleaner {
             }
             if (before == s) break
         }
-        s = SPACES.replace(s, " ").trim()
+        s = collapse(s).trim()
         low = s.lowercase()
         if (TRAIL_HINTS.any { low.contains(it) } || low.contains("topic")) {
             guard = 0
@@ -176,7 +200,7 @@ object NameCleaner {
             }
         }
         if (s.isNotEmpty() && s[0] in QUOTE_CHARS) s = WRAP_QUOTES.find(s)?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: s
-        s = trimEdges(SPACES.replace(s, " "))
+        s = trimEdges(collapse(s))
         return s.ifBlank { input.trim() }
     }
 
@@ -202,7 +226,7 @@ object NameCleaner {
         }
         // Quitar paréntesis (p. ej. "tripleS(트리플에스)") salvo que todo sea paréntesis.
         if (s.contains('(') || s.contains('[') || s.contains('{')) {
-            val noParen = BRACKETS.replace(s, " ").let { SPACES.replace(it, " ").trim() }
+            val noParen = BRACKETS.replace(s, " ").let { collapse(it).trim() }
             if (noParen.isNotBlank()) s = noParen
         }
         // Mezcla de palabras latinas y CJK: conservar las latinas ("IVE 아이브" -> "IVE").
@@ -215,7 +239,7 @@ object NameCleaner {
             }
         }
         if (wasVevo && !s.contains(' ')) s = splitCamel(s)
-        s = SPACES.replace(s, " ").trim()
+        s = collapse(s).trim()
         return s.ifBlank { null }
     }
 
@@ -289,7 +313,7 @@ object NameCleaner {
         }
         if (artistTag == null) {
             // "Artista 'Canción' MV"
-            val q = QUOTED.find(title)
+            val q = if (title.any { it in QUOTE_CHARS || it == '’' || it == '”' }) QUOTED.find(title) else null
             if (q != null) {
                 val before = title.substring(0, q.range.first).let { EDGE.replace(it, "").trim() }
                 if (before.isNotBlank() && before.length <= 40) {
@@ -301,7 +325,7 @@ object NameCleaner {
         return Result(title, artistTag, album)
     }
 
-    private fun looksLikeFileName(t: String): Boolean = EXT.containsMatchIn(t.trim())
+    private fun looksLikeFileName(t: String): Boolean = extOf(t.trim()) != null
 
     private fun cleanAlbum(a: String?, artist: String?): String? {
         if (isUnknown(a)) return null
@@ -314,6 +338,7 @@ object NameCleaner {
 
     /** Separa "Artista - Canción" en el PRIMER guion con espacios. */
     fun splitDash(s: String): Pair<String, String>? {
+        if (s.none { it == '-' || it == '–' || it == '—' || it == '｜' }) return null
         val m = DASH_SPLIT.find(s) ?: return null
         val left = s.substring(0, m.range.first).trim()
         val right = s.substring(m.range.last + 1).trim()
@@ -326,8 +351,11 @@ object NameCleaner {
 
     /** Primer artista para agrupar ("A feat. B" -> "A", "A, B" -> "A"). "A & B" se respeta. */
     fun primaryArtist(artist: String): String {
-        var s = FEAT_SPLIT.replace(artist, "").trim()
-        s = ARTIST_LIST_SPLIT.split(s).firstOrNull()?.trim().orEmpty()
+        val low = artist.lowercase()
+        var s = if (hasFeat(low)) FEAT_SPLIT.replace(artist, "").trim() else artist.trim()
+        if (s.any { it == ',' || it == ';' || it == '/' } || low.contains(" x ") || low.contains(" & ")) {
+            s = ARTIST_LIST_SPLIT.split(s).firstOrNull()?.trim().orEmpty()
+        }
         return s.ifBlank { artist.trim() }
     }
 
@@ -358,8 +386,12 @@ object NameCleaner {
     private fun keyRaw(s: String): String {
         var t = fold(s)
         t = t.replace('$', 's').replace("&", " n ").replace("+", " n ")
-        t = t.replace(THE, "")
-        t = t.replace(AND, " n ")
+        if (t.startsWith("the ")) t = t.substring(4)
+        if (t.indexOf(' ') >= 0) {
+            val parts = t.split(' ').toMutableList()
+            for (i in 1 until parts.size - 1) if (parts[i] in AND_WORDS) parts[i] = "n"
+            t = parts.joinToString(" ")
+        }
         val sb = StringBuilder(t.length)
         for (c in t) if (c.isLetterOrDigit()) sb.append(c)
         return sb.toString()
@@ -373,10 +405,10 @@ object NameCleaner {
 
     private fun titleKeyRaw(title: String): String {
         var t = cleanTitle(title)
-        t = FEAT_SPLIT.replace(t, "")
+        if (hasFeat(t.lowercase())) t = FEAT_SPLIT.replace(t, "")
         t = BRACKETS.replace(t, " ")
         t = CJK_BRACKETS.replace(t, " ")
-        t = t.replace(VERSION_SUFFIX, "")
+        if (t.any { it == '-' || it == '–' || it == '—' }) t = t.replace(VERSION_SUFFIX, "")
         val k = key(t)
         return k.ifBlank { key(title) }
     }

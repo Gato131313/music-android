@@ -126,8 +126,10 @@ class LibraryRepository(
     }
 
     fun onPermissionsChanged() {
+        val before = _hasPermission.value
         _hasPermission.value = scanner.hasAudioPermission()
-        scope.launch { refresh() }
+        // Solo re-escanear si el permiso acaba de darse (onResume lo llama en cada vuelta a la app)
+        if (!before && _hasPermission.value) scope.launch { refresh() }
     }
 
     /** Re-lee MediaStore. Con [systemScan] también pide al sistema reindexar carpetas (botón "Escanear medios"). */
