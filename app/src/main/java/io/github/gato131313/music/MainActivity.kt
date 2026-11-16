@@ -15,6 +15,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val start = intent?.getStringExtra(EXTRA_ROUTE)
+        // Solo en la versión de medición del CI: elegir estilo desde la línea de comandos
+        if (packageName.endsWith(".bench")) intent?.getStringExtra("estilo")?.let { st ->
+            kotlinx.coroutines.runBlocking { MusicApp.graph.settings.update { it.copy(style = st) } }
+        }
         setContent {
             val settings by MusicApp.graph.settings.flow.collectAsStateWithLifecycle()
             MusicTheme(appColorsFor(settings)) {

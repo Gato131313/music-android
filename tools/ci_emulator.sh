@@ -53,6 +53,9 @@ mide () {
 }
 mide songs canciones
 mide artists artistas
+adb shell am start -n $ACT --es estilo solido > /dev/null; sleep 3
+mide songs canciones_solido
+adb shell am start -n $ACT --es estilo music > /dev/null; sleep 3
 adb shell am start -n $ACT > /dev/null; sleep 4
 adb shell dumpsys gfxinfo $B reset > /dev/null
 for i in $(seq 1 8); do adb shell input swipe 540 1900 540 700 150; sleep 0.5; adb shell input swipe 540 700 540 1900 150; sleep 0.5; done
