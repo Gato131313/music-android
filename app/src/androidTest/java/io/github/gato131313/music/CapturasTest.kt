@@ -32,12 +32,14 @@ class CapturasTest {
 
     private fun shot(name: String, wait: Long = 900) {
         Thread.sleep(wait)
+        dismissSystemDialogs()
         d.waitForIdle(3000)
         d.executeShellCommand("screencap -p $out/$name.png")
         note("captura $name")
     }
 
     private fun click(sel: BySelector, timeout: Long = 8000): Boolean {
+        dismissSystemDialogs()
         val o = d.wait(Until.findObject(sel), timeout)
         if (o == null) {
             note("NO ENCONTRADO: $sel")
@@ -47,7 +49,17 @@ class CapturasTest {
         return true
     }
 
-    private fun tile(name: String) = By.text(Pattern.compile("^" + Pattern.quote(name) + "(\\s.*)?$", Pattern.DOTALL))
+    private fun tile(name: String) = By.text(Pattern.compile("^" + Pattern.quote(name) + "([\\s,].*)?$", Pattern.DOTALL))
+
+    /** Cierra diálogos del sistema ("X no responde") que en emuladores lentos tapan la pantalla. */
+    private fun dismissSystemDialogs() {
+        repeat(3) {
+            val anr = d.findObject(By.textContains("isn't responding")) ?: d.findObject(By.textContains("no responde")) ?: return
+            note("diálogo del sistema: ${anr.text}")
+            (d.findObject(By.text("Wait")) ?: d.findObject(By.text("Esperar")))?.click()
+            Thread.sleep(800)
+        }
+    }
 
     private fun step(name: String, block: () -> Unit) {
         try {
@@ -63,6 +75,7 @@ class CapturasTest {
         if (extraRoute != null) intent.putExtra("route", extraRoute)
         inst.targetContext.startActivity(intent)
         d.wait(Until.hasObject(By.pkg(pkg).depth(0)), 15000)
+        dismissSystemDialogs()
     }
 
     private fun scrollPerf(name: String) {
@@ -90,7 +103,7 @@ class CapturasTest {
         val t0 = System.currentTimeMillis()
         launch()
         // Esperar a que la biblioteca esté cargada (contador con 3+ cifras).
-        val ok = d.wait(Until.hasObject(By.text(Pattern.compile("\\(\\d{3,}\\)"))), 120_000)
+        val ok = d.wait(Until.hasObject(By.text(SessionProbe.COUNT)), 120_000)
         note("biblioteca visible: $ok en ${System.currentTimeMillis() - t0} ms")
         Thread.sleep(3000)
         shot("01_inicio")
@@ -240,5 +253,110 @@ class CapturasTest {
             shot("32_efectos_abajo")
         }
         saveLog("informe3.txt")
+    }
+
+    private fun settings(block: (io.github.gato131313.music.data.prefs.Settings) -> io.github.gato131313.music.data.prefs.Settings) =
+        kotlinx.coroutines.runBlocking { MusicApp.graph.settings.update(block) }
+
+    @Test
+    fun d_fase4() {
+        d.executeShellCommand("mkdir -p $out")
+        launch()
+        d.wait(Until.hasObject(By.text(SessionProbe.COUNT)), 60_000)
+        Thread.sleep(1500)
+        step("menu lista") { val m = d.wait(Until.findObjects(By.desc("Opciones de Favoritos")), 5000); m?.firstOrNull()?.click(); shot("40_menu_lista"); d.pressBack() }
+        step("menu cancion") {
+            launch("songs"); Thread.sleep(2500)
+            d.wait(Until.findObjects(By.desc("Opciones")), 5000)?.getOrNull(1)?.click()
+            shot("41_menu_cancion_completo"); d.pressBack()
+        }
+        step("temas") { launch("themes"); shot("42_temas", 2000) }
+        step("ajustes") { launch("settings"); shot("43_ajustes", 2000) }
+        step("ocultos") { launch("hidden"); shot("44_ocultos", 1500) }
+        step("paisaje") {
+            settings { it.copy(style = "paisaje", background = "atardecer") }
+            launch(); Thread.sleep(3000); shot("45_inicio_paisaje")
+            click(By.desc("Menú")); shot("46_menu_paisaje"); d.pressBack()
+            settings { it.copy(style = "music", mode = "light") }
+            launch(); Thread.sleep(3000); shot("47_inicio_blanco")
+            settings { it.copy(style = "neon") }
+            launch(); Thread.sleep(3000); shot("48_inicio_neon")
+            settings { it.copy(style = "music", mode = "dark") }
+        }
+        saveLog("informe4.txt")
+    }
+
+    @Test
+    fun e_fase5() {
+        d.executeShellCommand("mkdir -p $out")
+        val lib = SessionProbe.awaitLibrary()
+        val paired = lib.songs.filter { it.hasVideo }
+        note("parejas cancion+video: ${paired.size} de ${lib.songs.size} canciones; videos sueltos: ${lib.videos.size}; videos totales: ${lib.allVideos.size}")
+        note("artistas: ${lib.artists.size}; dudas para revisar: ${lib.review.total} (uniones ${lib.review.merges.size}, separar ${lib.review.splits.size}, sin artista ${lib.review.unknownArtist.size})")
+        note("ejemplos de nombres limpios: " + lib.songs.shuffled(java.util.Random(1)).take(12).joinToString(" | ") { "${it.fileName} => ${it.title} — ${it.displayArtist}" })
+        step("estilos de portada") {
+            val t = paired.firstOrNull() ?: lib.songs.first()
+            d.executeShellCommand("am start -n $pkg/io.github.gato131313.music.MainActivity")
+            Thread.sleep(1500)
+            InstrumentationRegistry.getInstrumentation().runOnMainSync { MusicApp.graph.player.play(listOf(t) + lib.songs.take(20), 0) }
+            Thread.sleep(2500)
+            settings { it.copy(coverStyle = "disco") }
+            d.executeShellCommand("am start -n $pkg/io.github.gato131313.music.MainActivity --es route player")
+            shot("50_portada_disco", 3500)
+            settings { it.copy(coverStyle = "cuadrada") }
+            shot("51_portada_cuadrada", 2500)
+            settings { it.copy(coverStyle = "aurora") }
+            shot("52_portada_aurora", 2500)
+            settings { it.copy(coverStyle = "disco") }
+        }
+        step("video") {
+            if (paired.isNotEmpty()) {
+                click(By.text("Video")); shot("53_modo_video", 4000)
+                note("modo video: " + session())
+                click(By.text("Canción")); Thread.sleep(1500)
+                note("de vuelta a canción: " + session())
+            }
+        }
+        step("letra") { click(By.desc("Letra")); shot("54_letra", 6000); click(By.desc("Ocultar letra")) }
+        step("conductor") { launch("driver"); shot("55_conductor", 2500) }
+        step("widgets") { launch("widgets"); shot("56_widgets", 1500) }
+        saveLog("informe5.txt")
+    }
+
+    @Test
+    fun f_fase6() {
+        d.executeShellCommand("mkdir -p $out")
+        val ctx = inst.targetContext
+        val g = MusicApp.graph
+        val lib = SessionProbe.awaitLibrary()
+        step("importar csv") {
+            val pick = lib.songs.shuffled(java.util.Random(7)).take(40)
+            val sb = StringBuilder("titulo,artista,reproducciones,favorito\n")
+            pick.forEachIndexed { i, t ->
+                val dirtyTitle = if (i % 2 == 0) t.title.uppercase() + " (Official Video)" else t.title
+                val dirtyArtist = if (i % 3 == 0) (t.artist ?: "") + " - Topic" else (t.artist ?: "").lowercase()
+                sb.append('"').append(dirtyTitle).append("\",\"").append(dirtyArtist).append("\",").append(200 - i * 3).append(',').append(if (i < 5) "sí" else "").append('\n')
+            }
+            sb.append("Cancion Inventada,Nadie,9,\nOtra Que No Existe,Fulano,4,\n")
+            val f = java.io.File(ctx.cacheDir, "reproducciones.csv").apply { writeText(sb.toString()) }
+            val r = kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, android.net.Uri.fromFile(f)) }
+            note("importar: filas=${r.rows} empatadas=${r.plays.size} favoritos=${r.favorites.size} sin_empatar=${r.unmatched.size}")
+            launch("import"); shot("60_importar", 2500)
+            launch("smart/mas"); shot("61_mas_reproducidas", 2500)
+            launch("stats"); Thread.sleep(2000); click(By.text("Todo")); shot("62_estadisticas", 2500)
+        }
+        step("respaldo") {
+            val f = java.io.File(ctx.cacheDir, "respaldo.json")
+            kotlinx.coroutines.runBlocking { g.backup.exportTo(ctx, android.net.Uri.fromFile(f)) }
+            note("respaldo: ${f.length()} bytes")
+            val b = kotlinx.coroutines.runBlocking { g.backup.restoreFrom(ctx, android.net.Uri.fromFile(f)) }
+            note("restaurado: favoritos=${b.favorites.size} estadisticas=${b.stats.size} playlists=${b.playlists.size}")
+            launch("backup"); shot("63_respaldo", 1500)
+        }
+        step("memoria") {
+            val mi = d.executeShellCommand("dumpsys meminfo $pkg").lines().firstOrNull { it.contains("TOTAL PSS") || it.trim().startsWith("TOTAL") }
+            note("memoria: $mi")
+        }
+        saveLog("informe6.txt")
     }
 }

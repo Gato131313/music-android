@@ -4,6 +4,10 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import java.util.regex.Pattern
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 
 /** Ayudas para leer el estado de la sesión multimedia desde el sistema (dumpsys). */
 object SessionProbe {
@@ -18,9 +22,14 @@ object SessionProbe {
         return "estado=$state pos=$pos cancion=$desc"
     }
 
-    val TIME: Pattern = Pattern.compile(".*\\d\\d:\\d\\d")
-    val ROW: Pattern = Pattern.compile(".* · \\d\\d:\\d\\d")
+    val TIME: Pattern = Pattern.compile(".*\\d\\d:\\d\\d.*", Pattern.DOTALL)
+    val ROW: Pattern = Pattern.compile(".* · \\d\\d:\\d\\d.*", Pattern.DOTALL)
+    val COUNT: Pattern = Pattern.compile(".*\\(\\d{3,}\\).*", Pattern.DOTALL)
     val CLOCK: Pattern = Pattern.compile("\\d\\d:\\d\\d")
+
+    fun awaitLibrary(): io.github.gato131313.music.data.model.Library = runBlocking {
+        withTimeout(90_000) { MusicApp.graph.library.libraryOrNull.filterNotNull().first { it.songs.isNotEmpty() } }
+    }
 
     fun waitList(d: UiDevice) = d.wait(Until.hasObject(By.text(TIME)), 60_000)
 }

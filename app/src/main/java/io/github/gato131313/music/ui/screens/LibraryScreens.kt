@@ -82,7 +82,7 @@ import kotlinx.coroutines.withContext
 /** Acciones comunes que las pantallas piden a la app (reproducir, menú, navegar). */
 interface UiActions {
     fun play(queue: List<Track>, index: Int, shuffle: Boolean = false)
-    fun menu(track: Track, context: List<Track> = emptyList())
+    fun menu(track: Track, context: List<Track> = emptyList(), playlistId: Long? = null)
     fun navigate(route: String)
     fun back()
     fun currentId(): Long? = null
@@ -121,6 +121,7 @@ fun TrackListScreen(
     header: (@Composable () -> Unit)? = null,
     showSort: Boolean = false,
     numbered: Boolean = false,
+    playlistId: Long? = null,
 ) {
     val c = LocalAppColors.current
     val settings by MusicApp.graph.settings.flow.collectAsState()
@@ -161,7 +162,7 @@ fun TrackListScreen(
                 items(sorted.size, key = { sorted[it].id }, contentType = { "t" }) { i ->
                     val t = sorted[i]
                     TrackRow(
-                        t, onClick = { a.play(sorted, i) }, onMenu = { a.menu(t, sorted) }, playing = t.id == current,
+                        t, onClick = { a.play(sorted, i) }, onMenu = { a.menu(t, sorted, playlistId) }, playing = t.id == current,
                         leading = if (numbered) ({
                             Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) { Text("${i + 1}", color = c.text2, fontSize = 15.sp) }
                         }) else null,

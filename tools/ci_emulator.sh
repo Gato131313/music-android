@@ -13,6 +13,8 @@ for i in $(seq 1 60); do
   sleep 3
 done
 adb shell wm dismiss-keyguard || true
+adb shell settings put global window_animation_scale 0.5 || true
+adb shell settings put global transition_animation_scale 0.5 || true
 for d in tools/testlib/*; do adb push "$d" /sdcard/ | tail -1; done
 adb shell content call --uri content://media --method scan_volume --arg external_primary || true
 sleep 25
