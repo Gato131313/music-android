@@ -45,8 +45,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Sin R8: más grande pero sin sorpresas en tiempo de ejecución (serialización, Media3, Glance)
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             val rel = signingConfigs.getByName("release")
             if (rel.storeFile != null) signingConfig = rel

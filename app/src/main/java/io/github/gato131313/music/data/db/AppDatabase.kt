@@ -231,6 +231,24 @@ interface LyricsDao {
     @Upsert suspend fun put(l: LyricsCache)
 }
 
+@Dao
+interface ResetDao {
+    @Query("DELETE FROM favorite") suspend fun c0()
+    @Query("DELETE FROM play_stat") suspend fun c1()
+    @Query("DELETE FROM play_event") suspend fun c2()
+    @Query("DELETE FROM playlist") suspend fun c3()
+    @Query("DELETE FROM playlist_item") suspend fun c4()
+    @Query("DELETE FROM track_edit") suspend fun c5()
+    @Query("DELETE FROM artist_alias") suspend fun c6()
+    @Query("DELETE FROM artist_reject") suspend fun c7()
+    @Query("DELETE FROM split_decision") suspend fun c8()
+    @Query("DELETE FROM pair_override") suspend fun c9()
+    @Query("DELETE FROM hidden") suspend fun c10()
+    @Query("DELETE FROM song_fx") suspend fun c11()
+    @Query("DELETE FROM eq_preset") suspend fun c12()
+    @Query("DELETE FROM import_unmatched") suspend fun c13()
+}
+
 @Database(
     entities = [
         MediaEntity::class, TrackEdit::class, ArtistAlias::class, ArtistReject::class, SplitDecision::class,
@@ -246,6 +264,26 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun stats(): StatsDao
     abstract fun playlists(): PlaylistDao
     abstract fun lyrics(): LyricsDao
+    abstract fun reset(): ResetDao
+
+    /** Borra los datos del usuario (para restaurar un respaldo). Llamar dentro de una transacción. */
+    suspend fun clearUserTables() {
+        val r = reset()
+        r.c0()
+        r.c1()
+        r.c2()
+        r.c3()
+        r.c4()
+        r.c5()
+        r.c6()
+        r.c7()
+        r.c8()
+        r.c9()
+        r.c10()
+        r.c11()
+        r.c12()
+        r.c13()
+    }
 
     companion object {
         fun create(ctx: Context): AppDatabase =

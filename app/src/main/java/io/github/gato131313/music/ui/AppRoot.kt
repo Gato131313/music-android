@@ -138,7 +138,8 @@ fun AppRoot(startRoute: String? = null) {
     val nav = rememberNavController()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var editing by remember { mutableStateOf<Track?>(null) }
+    var menuFor by remember { mutableStateOf<Pair<Track, io.github.gato131313.music.ui.screens.MenuContext>?>(null) }
+    var listMenuFor by remember { mutableStateOf<io.github.gato131313.music.ui.screens.ListEntry?>(null) }
     var newPlaylist by remember { mutableStateOf(false) }
     val lib = libraryState()
     val playerOpen = rememberSaveable { mutableStateOf(startRoute == "player") }
@@ -149,6 +150,14 @@ fun AppRoot(startRoute: String? = null) {
     val density = LocalDensity.current
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LaunchedEffect(Unit) { g.player.connect() }
+    LaunchedEffect(Unit) {
+        if (!io.github.gato131313.music.BuildConfig.DEBUG) g.updates.check()
+        kotlinx.coroutines.delay(20_000)
+        val prefs = ctx.getSharedPreferences("auto", android.content.Context.MODE_PRIVATE)
+        if (System.currentTimeMillis() - prefs.getLong("backup", 0) > 20 * 3_600_000L && g.backup.autoBackup(ctx)) prefs.edit().putLong("backup", System.currentTimeMillis()).apply()
+    }
+    val update by g.updates.available.collectAsState()
+    val updProgress by g.updates.progress.collectAsState()
 
     val actions = remember(nav) {
         object : UiActions {
@@ -157,7 +166,7 @@ fun AppRoot(startRoute: String? = null) {
                 if (queue.getOrNull(index)?.isVideo == true) playerOpen.value = true
             }
             override fun currentId(): Long? = g.player.state.value.current?.id
-            override fun menu(track: Track, context: List<Track>) { editing = track }
+            override fun menu(track: Track, context: List<Track>, playlistId: Long?) { menuFor = track to io.github.gato131313.music.ui.screens.MenuContext(playlistId) }
             override fun navigate(route: String) {
                 when (route) {
                     "player" -> playerOpen.value = true
@@ -179,7 +188,7 @@ fun AppRoot(startRoute: String? = null) {
         CompositionLocalProvider(LocalBottomInset provides bottomInset) {
             NavHost(nav, startDestination = startRoute?.takeIf { it != "player" } ?: "home", modifier = Modifier.fillMaxSize().background(LocalAppColors.current.bg).haze(rootHaze)) {
                 composable("home") {
-                    HomeScreen(actions, openDrawer = { scope.launch { drawer.open() } }, onNewPlaylist = { newPlaylist = true }, onListMenu = { })
+                    HomeScreen(actions, openDrawer = { scope.launch { drawer.open() } }, onNewPlaylist = { newPlaylist = true }, onListMenu = { listMenuFor = it })
                 }
                 composable("songs") { SongsScreen(actions) }
                 composable("albums") { AlbumsScreen(actions) }
@@ -208,9 +217,18 @@ fun AppRoot(startRoute: String? = null) {
                     val id = it.arguments?.getString("id")?.toLongOrNull() ?: 0
                     val items by g.user.playlistItems(id).collectAsState(initial = emptyList())
                     val pls by g.user.playlists.collectAsState()
-                    TrackListScreen(pls.firstOrNull { p -> p.id == id }?.name ?: "Playlist", items.mapNotNull { i -> lib.byKey[i.key] }, actions)
+                    TrackListScreen(pls.firstOrNull { p -> p.id == id }?.name ?: "Playlist", items.mapNotNull { i -> lib.byKey[i.key] }, actions, playlistId = id)
                 }
                 composable("effects") { io.github.gato131313.music.ui.screens.EffectsScreen(actions) }
+                composable("themes") { io.github.gato131313.music.ui.screens.ThemesScreen(actions) }
+                composable("settings") { io.github.gato131313.music.ui.screens.SettingsScreen(actions) }
+                composable("stats") { io.github.gato131313.music.ui.screens.StatsScreen(actions) }
+                composable("driver") { io.github.gato131313.music.ui.screens.DriverScreen(actions) }
+                composable("widgets") { io.github.gato131313.music.ui.screens.WidgetsScreen(actions) }
+                composable("import") { io.github.gato131313.music.ui.screens.ImportScreen(actions) }
+                composable("backup") { io.github.gato131313.music.ui.screens.BackupScreen(actions) }
+                composable("hidden") { io.github.gato131313.music.ui.screens.HiddenScreen(actions) }
+                composable("playlists") { io.github.gato131313.music.ui.screens.PlaylistsScreen(actions, onNew = { newPlaylist = true }, onMenu = { listMenuFor = it }) }
                 composable("soon/{name}") { ComingSoon(dec(it.arguments?.getString("name") ?: ""), actions) }
             }
         }
@@ -219,7 +237,7 @@ fun AppRoot(startRoute: String? = null) {
             modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 6.dp).onSizeChanged { miniH = it.height },
         )
         AnimatedVisibility(playerOpen.value, enter = slideInVertically(tween(320)) { it }, exit = slideOutVertically(tween(260)) { it }) {
-            PlayerScreen(PlayerCallbacks(onClose = { playerOpen.value = false }, onEffects = { playerOpen.value = false; actions.navigate("effects") }, onMenu = { t -> editing = t }))
+            PlayerScreen(PlayerCallbacks(onClose = { playerOpen.value = false }, onEffects = { playerOpen.value = false; actions.navigate("effects") }, onMenu = { t -> menuFor = t to io.github.gato131313.music.ui.screens.MenuContext() }))
         }
         }
     }
@@ -227,7 +245,35 @@ fun AppRoot(startRoute: String? = null) {
         NavRequests.route.collect { r -> if (r != null) { NavRequests.route.value = null; actions.navigate(r) } }
     }
     if (sleepOpen.value) SleepTimerDialog { sleepOpen.value = false }
-    editing?.let { t -> EditTrackDialog(t) { editing = null } }
+    update?.let { r ->
+        val c = LocalAppColors.current
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (updProgress == null) g.updates.dismiss() },
+            containerColor = c.bg2,
+            title = { Text("Nueva versión ${r.version}", color = c.text) },
+            text = {
+                Column {
+                    Text(r.notes.ifBlank { "Mejoras y correcciones." }.take(600), color = c.text2, fontSize = 14.sp)
+                    updProgress?.let { p ->
+                        Spacer(Modifier.height(12.dp))
+                        androidx.compose.material3.LinearProgressIndicator(progress = { p }, color = c.accent, modifier = Modifier.fillMaxWidth())
+                        Text("Descargando ${(p * 100).toInt()}%", color = c.text2, fontSize = 13.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(enabled = updProgress == null, onClick = {
+                    g.scope.launch { g.updates.downloadAndInstall(ctx, r).onFailure { Toast.makeText(ctx, "No se pudo descargar: ${it.message}", Toast.LENGTH_LONG).show() } }
+                }) { Text("Actualizar", color = c.accent) }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { g.updates.dismiss() }) { Text("Ahora no", color = c.text2) } },
+        )
+    }
+    menuFor?.let { (t, mc) -> io.github.gato131313.music.ui.screens.TrackMenuSheet(t, mc, actions) { menuFor = null } }
+    listMenuFor?.let { e ->
+        val tracks = listTracks(e, lib)
+        io.github.gato131313.music.ui.screens.ListMenuSheet(e, tracks) { listMenuFor = null }
+    }
     if (newPlaylist) TextInputDialog("Nueva playlist", "", onDismiss = { newPlaylist = false }) { name ->
         newPlaylist = false
         scope.launch { g.user.createPlaylist(name) }
@@ -241,11 +287,30 @@ private fun handleRoute(route: String, nav: NavHostController, ctx: android.cont
             Toast.makeText(ctx, "Escaneando medios…", Toast.LENGTH_SHORT).show()
             g.library.refreshAsync(systemScan = true)
         }
-        "action/shuffle", "action/sleep", "themes", "widgets", "driver", "hidden", "stats", "import", "settings", "playlists" ->
-            nav.navigate("soon/" + java.net.URLEncoder.encode(route, "UTF-8"))
+        "action/update" -> {
+            Toast.makeText(ctx, "Buscando actualizaciones…", Toast.LENGTH_SHORT).show()
+            g.scope.launch {
+                val r = g.updates.check(force = true)
+                r.onSuccess { if (it == null) Toast.makeText(ctx, "Ya tienes la versión más nueva", Toast.LENGTH_SHORT).show() }
+                r.onFailure { Toast.makeText(ctx, "No se pudo revisar: ${it.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
         else -> nav.navigate(route) { launchSingleTop = true }
     }
     closeDrawer()
+}
+
+@Composable
+private fun listTracks(e: io.github.gato131313.music.ui.screens.ListEntry, lib: io.github.gato131313.music.data.model.Library): List<Track> {
+    val g = MusicApp.graph
+    val items by (e.playlistId?.let { g.user.playlistItems(it) } ?: kotlinx.coroutines.flow.flowOf(emptyList())).collectAsState(initial = emptyList())
+    return when (e.route) {
+        "smart/favoritos" -> g.user.favoriteTracks(lib)
+        "smart/anadidas" -> g.user.recentlyAdded(lib)
+        "smart/recientes" -> g.user.recentlyPlayed(lib)
+        "smart/mas" -> g.user.mostPlayed(lib)
+        else -> items.mapNotNull { lib.byKey[it.key] }
+    }
 }
 
 @Composable

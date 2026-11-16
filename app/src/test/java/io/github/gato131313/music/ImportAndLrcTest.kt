@@ -1,0 +1,70 @@
+package io.github.gato131313.music
+
+import io.github.gato131313.music.data.backup.ImportCore
+import io.github.gato131313.music.data.clean.LibraryBuilder
+import io.github.gato131313.music.data.model.RawMedia
+import io.github.gato131313.music.data.model.UserEdits
+import io.github.gato131313.music.lyrics.Lrc
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ImportAndLrcTest {
+    private fun raw(id: Long, name: String, title: String? = null, artist: String? = null) =
+        RawMedia(id, false, "/storage/emulated/0/Download/$name", name, "Download/", title, artist, null, 0, null, 200_000, 1, 0, null)
+
+    private val lib = LibraryBuilder.build(
+        listOf(
+            raw(1, "Guns N' Roses - Patience (Official Music Video).mp3"),
+            raw(2, "x.mp3", "Tu Falta De Querer", "Mon Laferte - Topic"),
+            raw(3, "EMJAY - Xtraparticular (Video Oficial).mp3"),
+            raw(4, "Reino De Amor.mp3", "Reino De Amor", "Mon Laferte"),
+        ),
+        UserEdits(),
+    )
+
+    @Test fun leeCsvConEncabezadoYComillas() {
+        val csv = "﻿Título;Artista;Reproducciones;Favorito\n\"Patience\";\"guns n roses\";120;sí\n\"Tu falta de querer (Official Video)\";Mon Laferte;\"1,234\";no\r\n"
+        val rows = ImportCore.parseCsv(csv)
+        assertEquals(2, rows.size)
+        assertEquals(120, rows[0].plays)
+        assertTrue(rows[0].favorite)
+        assertEquals(1234, rows[1].plays)
+    }
+
+    @Test fun empataIgnorandoMayusculasAcentosYSufijos() {
+        val csv = """titulo,artista,reproducciones,favorito
+patience,Guns N' Roses - Topic,50,1
+"Tu Falta De Querer (Official Video)",MON LAFERTE,30,
+XTRAPARTICULAR,EmjayVEVO,7,
+"Mon Laferte - Reino de amor",,4,x
+Cancion Que No Existe,Nadie,9,
+"""
+        val r = ImportCore.match(ImportCore.parseCsv(csv), lib.songs)
+        assertEquals(5, r.rows)
+        assertEquals(4, r.plays.size)
+        assertEquals(1, r.unmatched.size)
+        assertEquals("Cancion Que No Existe", r.unmatched[0].title)
+        assertEquals(2, r.favorites.size)
+        val patience = lib.songs.first { it.title == "Patience" }
+        assertEquals(50, r.plays[patience.key])
+        assertTrue(ImportCore.suggestions(r.unmatched[0], lib.songs).isNotEmpty())
+    }
+
+    @Test fun csvSinEncabezado() {
+        val r = ImportCore.match(ImportCore.parseCsv("Patience,Guns N Roses,3\n"), lib.songs)
+        assertEquals(1, r.plays.size)
+    }
+
+    @Test fun lrcConVariasMarcasYOffset() {
+        val lrc = "[ar:Yo]\n[offset:+500]\n[00:01.50][00:30.00]Hola <00:02.00>mundo\n[00:05.2]Adiós\n\n[01:02.345]Fin"
+        val l = Lrc.parse(lrc)
+        assertEquals(4, l.size)
+        assertEquals(1000L, l[0].timeMs)
+        assertEquals("Hola mundo", l[0].text)
+        assertEquals(4700L, l[1].timeMs)
+        assertEquals(61845L, l.last().timeMs)
+        assertEquals(1, Lrc.indexAt(l, 5000))
+        assertEquals(-1, Lrc.indexAt(l, 500))
+    }
+}

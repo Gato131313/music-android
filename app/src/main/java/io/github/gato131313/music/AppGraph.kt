@@ -24,4 +24,7 @@ class AppGraph(val app: Application) {
     val fx = FxEngine(app, scope).also { e -> hub.processorsFactory = { arrayOf(e.newProcessor()) } }
     val player = PlayerController(app, this)
     val fxController = FxController(this)
+    val lyrics = io.github.gato131313.music.lyrics.LyricsRepository(this)
+    val backup = io.github.gato131313.music.data.backup.BackupManager(this)
+    val updates = io.github.gato131313.music.update.UpdateChecker(this)
 }
