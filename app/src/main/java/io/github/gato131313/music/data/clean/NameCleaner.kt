@@ -92,7 +92,7 @@ object NameCleaner {
     private val cleanMemo = java.util.concurrent.ConcurrentHashMap<String, Result>()
 
     /** Súbelo cuando cambien las reglas: invalida la memoria guardada en disco. */
-    const val RULES_VERSION = 3
+    const val RULES_VERSION = 4
     private const val NUL = "\u0000"
 
     fun memoSize() = cleanMemo.size + titleKeyMemo.size
@@ -125,7 +125,8 @@ object NameCleaner {
         }
     }
 
-    private val AND_WORDS = setOf("and", "y", "e", "n", "'n'", "'n", "n'")
+    private val TOPIC_PREFIX = Regex("^topic\\s*[-–—|:]\\s*", RegexOption.IGNORE_CASE)
+    private val AND_WORDS =setOf("and", "y", "e", "n", "'n'", "'n", "n'")
     private fun hasFeat(low: String) = low.contains("feat") || low.contains("ft") || low.contains("con ") || low.contains("with ") || low.contains("prod")
 
     fun isUnknown(s: String?): Boolean = s == null || s.trim().lowercase() in UNKNOWN
@@ -291,7 +292,8 @@ object NameCleaner {
         if (parts != null) {
             val (left, right) = parts
             val l = cleanArtist(left) ?: left
-            val r = cleanTitle(right)
+            // "Artista - Topic - Canción": el "Topic" del canal queda pegado al título
+            val r = cleanTitle(if (right.length > 8 && right.substring(0, 5).equals("topic", true)) TOPIC_PREFIX.replace(right, "") else right)
             val auto = when {
                 decision == false -> false
                 decision == true -> true

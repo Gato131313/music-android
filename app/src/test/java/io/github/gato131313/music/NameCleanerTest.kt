@@ -84,6 +84,11 @@ class NameCleanerTest {
         assertEquals("BLACKPINK", r7.artist)
         assertEquals("뚜두뚜두 (DDU-DU DDU-DU)", r7.title)
 
+        // "Artista - Topic - Canción"
+        val r9 = c("Simon & Garfunkel - Topic - Heart Forever Lonely (Official Video).mp3")
+        assertEquals("Heart Forever Lonely", r9.title)
+        assertEquals("Simon & Garfunkel", r9.artist)
+
         // Decisión guardada del usuario: no separar
         val r8 = NameCleaner.clean("x.mp3", "Remastered - Live", "Queen", null, decision = false)
         assertNull(r8.splitCandidate)

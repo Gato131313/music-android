@@ -310,11 +310,12 @@ class CapturasTest {
         }
         step("video") {
             if (paired.isNotEmpty()) {
-                val before = MusicApp.graph.player.position()
+                var before = 0L
+                inst.runOnMainSync { before = MusicApp.graph.player.position() }
                 inst.runOnMainSync { MusicApp.graph.player.switchVideoMode(true) }
                 shot("53_modo_video", 4000)
                 val ui = MusicApp.graph.player.state.value
-                note("modo video: isVideoMode=${ui.isVideoMode} archivo=${ui.playingFile?.fileName} posicion antes=$before despues=${MusicApp.graph.player.position()} " + session())
+                note("modo video: isVideoMode=${ui.isVideoMode} archivo=${ui.playingFile?.fileName} posicion antes=$before " + session())
                 inst.runOnMainSync { MusicApp.graph.player.switchVideoMode(false) }
                 Thread.sleep(2000)
                 note("de vuelta a canción: isVideoMode=${MusicApp.graph.player.state.value.isVideoMode} " + session())
@@ -359,8 +360,8 @@ class CapturasTest {
             launch("backup"); shot("63_respaldo", 1500)
         }
         step("memoria") {
-            val mi = d.executeShellCommand("dumpsys meminfo $pkg").lines().firstOrNull { it.contains("TOTAL PSS") || it.trim().startsWith("TOTAL") }
-            note("memoria: $mi")
+            val mi = d.executeShellCommand("dumpsys meminfo $pkg").lines().filter { l -> listOf("Java Heap", "Native Heap", "Code:", "Graphics", "Private Other", "TOTAL PSS", "TOTAL RSS").any { l.contains(it) } }
+            note("memoria:\n" + mi.joinToString("\n"))
         }
         saveLog("informe6.txt")
     }

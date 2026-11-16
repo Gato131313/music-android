@@ -179,6 +179,8 @@ fun AppRoot(startRoute: String? = null) {
         }
     }
 
+    // Atrás con el menú lateral abierto: cerrar el menú (no salir de la app)
+    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = { AppDrawer { item -> scope.launch { drawer.close() }; actions.navigate(item.route) } },
