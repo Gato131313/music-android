@@ -361,6 +361,9 @@ class CapturasTest {
             val art = t.rawArtist?.takeIf { it.isNotBlank() } ?: "<unknown>"
             sb.append(q(oldTitle(t))).append(',').append(q(art)).append(',').append(300 - i * 4).append('\n')
         }
+        // La misma fila vista dos veces con otro número (audio y video, o dos canciones con el mismo título cortado)
+        val twin = pick[10]
+        sb.append(q(oldTitle(twin))).append(',').append(q(twin.rawArtist?.takeIf { it.isNotBlank() } ?: "<unknown>")).append(",7\n")
         sb.append("Cancion Inventada,Nadie,9\nOtra Que No Existe…,<unknown>,4\n")
         val csv = sb.toString()
         note("CSV de prueba (${pick.size + 2} filas), primeras líneas:\n" + csv.lines().take(12).joinToString("\n"))
@@ -410,6 +413,7 @@ class CapturasTest {
         val expected = pick.associate { t -> t.key to (before[t.key] ?: 0) + (r1.plays[t.key] ?: 0) }
         check(after1 == expected, "se SUMAN a las propias (ej. ${own[0].title}: ${before[own[0].key]} propias + ${r1.plays[own[0].key]} importadas = ${after1[own[0].key]})")
         val wrong = pick.filterIndexed { i, t -> r1.plays[t.key] != null && r1.plays[t.key] != 300 - i * 4 }
+        check(r1.plays[twin.key] == null && r1.unmatched.count { it.plays == 7 || it.plays == 260 } == 2, "filas que se ven iguales no se suman solas: quedan las 2 para unir a mano")
         check(wrong.isEmpty(), "cada canción recibió el número de SU fila (mal: ${wrong.map { it.title }})")
 
         // 3) Importar el mismo archivo otra vez: no se duplica

@@ -175,7 +175,9 @@ class BackupManager(private val g: AppGraph) {
             val s = db.stats().stat(key) ?: PlayStat(key)
             db.stats().upsertStat(s.copy(importedPlays = s.importedPlays + row.plays))
             // Recordar la unión: si se importa el mismo archivo otra vez, esta fila ya cae aquí y no se duplica
-            db.stats().upsertManual(ImportManual(ImportCore.rowId(CsvRow(row.title, row.artist, row.plays, row.favorite)), key))
+            val r = CsvRow(row.title, row.artist, row.plays, row.favorite)
+            val n = db.stats().manualNow().count { it.rowId.startsWith(ImportCore.rowId(r) + "#") }
+            db.stats().upsertManual(ImportManual(ImportCore.manualId(r, n), key))
             if (row.favorite) db.user().upsertFavorite(Favorite(key))
             db.stats().deleteUnmatched(row.id)
         }

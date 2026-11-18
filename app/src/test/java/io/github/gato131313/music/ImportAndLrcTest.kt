@@ -77,12 +77,27 @@ Cancion Que No Existe,Nadie,9,
     @Test fun unionManualSeRecuerdaAlReimportar() {
         val rows = ImportCore.parseCsv("titulo,artista,reproducciones\n\"Mon Laferte - Amor ...\",<unknown>,5\n")
         val target = lib.songs.first { it.title == "Amor Sin Fin" }
-        val manual = mapOf(ImportCore.rowId(rows[0]) to target.key)
+        val manual = mapOf(ImportCore.manualId(rows[0], 0) to target.key)
         val r1 = ImportCore.match(rows, lib.songs, manual)
         val r2 = ImportCore.match(rows, lib.songs, manual)
         assertEquals(mapOf(target.key to 5), r1.plays)
         assertEquals(r1.plays, r2.plays)
         assertTrue(r2.unmatched.isEmpty())
+    }
+
+    @Test fun filasIdenticasNoSeAdivinanYCadaUnaRecuerdaSuUnion() {
+        val rows = ImportCore.parseCsv("titulo,artista,reproducciones\n\"Mon Laferte - Amor …\",Mon Laferte,52\n\"Mon Laferte - Amor …\",Mon Laferte,52\n")
+        val a = lib.songs.first { it.title == "Amor Completo" }
+        val b = lib.songs.first { it.title == "Amor Sin Fin" }
+        assertEquals(2, ImportCore.match(rows, lib.songs).unmatched.size)
+        val uno = ImportCore.match(rows, lib.songs, mapOf(ImportCore.manualId(rows[0], 0) to a.key))
+        assertEquals(mapOf(a.key to 52), uno.plays)
+        assertEquals(1, uno.unmatched.size)
+        val dos = ImportCore.match(rows, lib.songs, mapOf(ImportCore.manualId(rows[0], 0) to a.key, ImportCore.manualId(rows[1], 1) to b.key))
+        assertEquals(mapOf(a.key to 52, b.key to 52), dos.plays)
+        // Mismo título cortado con números distintos: tampoco se suman solas a una misma canción
+        val dist = ImportCore.parseCsv("titulo,artista,reproducciones\nPatience,Guns N' Roses,180\nPatience,Guns N' Roses,102\n")
+        assertEquals(2, ImportCore.match(dist, lib.songs).unmatched.size)
     }
 
     @Test fun csvSinEncabezado() {

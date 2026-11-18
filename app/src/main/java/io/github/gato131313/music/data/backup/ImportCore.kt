@@ -71,7 +71,12 @@ object ImportCore {
     }
 
     /** Clave estable de una fila (para recordar uniones hechas a mano). */
-    fun rowId(r: CsvRow): String = NameCleaner.key(r.title) + "|" + NameCleaner.key(artistOf(r))
+    fun rowId(r: CsvRow): String = NameCleaner.key(r.title) + "|" + NameCleaner.key(artistOf(r)) + "|" + r.plays
+
+    private fun lookId(r: CsvRow): String = NameCleaner.key(r.title) + "|" + NameCleaner.key(artistOf(r))
+
+    /** Clave de la n-ésima fila idéntica (dos canciones distintas pueden verse igual si el título venía cortado). */
+    fun manualId(r: CsvRow, occurrence: Int): String = rowId(r) + "#" + occurrence
 
     /** La app anterior corta los títulos largos con "…": se empatan por el principio. */
     fun isTruncated(s: String): Boolean = s.trimEnd().let { it.endsWith("…") || it.endsWith("...") }
@@ -89,8 +94,14 @@ object ImportCore {
         val plays = HashMap<String, Int>()
         val favs = HashSet<String>()
         val unmatched = ArrayList<CsvRow>()
+        val seen = HashMap<String, Int>()
+        val twins = rows.groupingBy { lookId(it) }.eachCount()
         for (r in rows) {
-            val t = manual[rowId(r)]?.let { byKey[it] } ?: find(r, ix)
+            val id = rowId(r)
+            val manualKey = manual[manualId(r, seen.merge(id, 1, Int::plus)!! - 1)]
+            // Filas que se ven iguales (mismo título cortado y artista) pueden ser canciones distintas
+            // o el audio y el video de una: no adivinar, se unen a mano
+            val t = manualKey?.let { byKey[it] } ?: if ((twins[lookId(r)] ?: 0) > 1) null else find(r, ix)
             if (t == null) { unmatched += r; continue }
             if (r.plays > 0) plays.merge(t.key, r.plays, Int::plus)
             if (r.favorite) favs += t.key
