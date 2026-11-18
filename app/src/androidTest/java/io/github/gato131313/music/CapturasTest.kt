@@ -335,30 +335,126 @@ class CapturasTest {
         saveLog("informe5.txt")
     }
 
+    /** Total (propias + importadas) leído directo de la base. */
+    private fun total(key: String): Int = kotlinx.coroutines.runBlocking {
+        MusicApp.graph.db.stats().stat(key)?.let { it.plays + it.importedPlays } ?: 0
+    }
+
+    private fun check(ok: Boolean, what: String) = note((if (ok) "OK    " else "FALLA ") + what)
+
+    /**
+     * Simula el CSV sacado del video de la app vieja: título tal cual lo mostraba (etiqueta o nombre de archivo),
+     * cortado con "…" si era largo, artista de la etiqueta o "<unknown>". Lo importa por la pantalla real
+     * (selector de archivos de Android), reimporta, une a mano y comprueba que las sumas no se dupliquen.
+     */
+    private fun importarCsvComoAppVieja(lib: io.github.gato131313.music.data.model.Library) {
+        val ctx = inst.targetContext
+        val g = MusicApp.graph
+        val pick = lib.songs.shuffled(java.util.Random(11)).take(60)
+        fun oldTitle(t: io.github.gato131313.music.data.model.Track): String {
+            val raw = t.rawTitle?.takeIf { it.isNotBlank() } ?: t.fileName.substringBeforeLast('.')
+            return if (raw.length > 24) raw.take(22).trimEnd() + "…" else raw
+        }
+        fun q(s: String) = "\"" + s.replace("\"", "\"\"") + "\""
+        val sb = StringBuilder("titulo,artista,reproducciones\n")
+        pick.forEachIndexed { i, t ->
+            val art = t.rawArtist?.takeIf { it.isNotBlank() } ?: "<unknown>"
+            sb.append(q(oldTitle(t))).append(',').append(q(art)).append(',').append(300 - i * 4).append('\n')
+        }
+        sb.append("Cancion Inventada,Nadie,9\nOtra Que No Existe…,<unknown>,4\n")
+        val csv = sb.toString()
+        note("CSV de prueba (${pick.size + 2} filas), primeras líneas:\n" + csv.lines().take(12).joinToString("\n"))
+
+        // 1) Antes de importar, algunas canciones ya tienen reproducciones propias en la app nueva
+        val own = pick.take(5)
+        kotlinx.coroutines.runBlocking { own.forEach { t -> repeat(3) { g.user.recordPlay(t, 60_000) } } }
+        val before = pick.associate { it.key to total(it.key) }
+
+        // 2) Guardar el CSV en Descargas e importarlo por la pantalla, con el selector de archivos
+        val resolver = ctx.contentResolver
+        val coll = android.provider.MediaStore.Downloads.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = resolver.insert(coll, android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, "reproducciones_prueba.csv")
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/csv")
+        })!!
+        resolver.openOutputStream(uri, "wt")!!.use { it.write(csv.toByteArray()) }
+        launch("import"); shot("60_importar_antes", 2000)
+        var viaUi = false
+        if (click(By.text("Elegir archivo CSV"))) {
+            Thread.sleep(2500)
+            var f = d.wait(Until.findObject(By.textStartsWith("reproducciones_prueba")), 5000)
+            if (f == null) {
+                (d.findObject(By.desc("Show roots")) ?: d.findObject(By.desc("Mostrar raíces")))?.click()
+                Thread.sleep(1200)
+                (d.findObject(By.text("Downloads")) ?: d.findObject(By.text("Descargas")))?.click()
+                f = d.wait(Until.findObject(By.textStartsWith("reproducciones_prueba")), 6000)
+            }
+            if (f != null) {
+                shot("60b_selector", 300)
+                f.click()
+                viaUi = d.wait(Until.hasObject(By.textStartsWith("Listo:")), 20000)
+            } else {
+                shot("60b_selector_sin_archivo", 300)
+                d.pressBack()
+            }
+        }
+        note("importado por la pantalla con el selector de Android: $viaUi")
+        if (!viaUi) kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
+        d.findObject(By.textStartsWith("Listo:"))?.let { note("mensaje en pantalla: ${it.text}") }
+        shot("61_importar_resultado", 1500)
+
+        val r1 = kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
+        note("importar: filas=${r1.rows} empatadas=${r1.rows - r1.unmatched.size} canciones=${r1.plays.size} sin_empatar=${r1.unmatched.size}")
+        r1.unmatched.forEach { u -> note("  sin empatar: ${u.title} / ${u.artist}") }
+        val after1 = pick.associate { it.key to total(it.key) }
+        val expected = pick.associate { t -> t.key to (before[t.key] ?: 0) + (r1.plays[t.key] ?: 0) }
+        check(after1 == expected, "se SUMAN a las propias (ej. ${own[0].title}: ${before[own[0].key]} propias + ${r1.plays[own[0].key]} importadas = ${after1[own[0].key]})")
+        val wrong = pick.filterIndexed { i, t -> r1.plays[t.key] != null && r1.plays[t.key] != 300 - i * 4 }
+        check(wrong.isEmpty(), "cada canción recibió el número de SU fila (mal: ${wrong.map { it.title }})")
+
+        // 3) Importar el mismo archivo otra vez: no se duplica
+        kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
+        val after2 = pick.associate { it.key to total(it.key) }
+        check(after2 == after1, "reimportar el mismo archivo no duplica")
+
+        // 4) Después sigue contando normal
+        kotlinx.coroutines.runBlocking { g.user.recordPlay(own[0], 60_000) }
+        check(total(own[0].key) == after2[own[0].key]!! + 1, "una reproducción nueva suma 1 (${after2[own[0].key]} -> ${total(own[0].key)})")
+
+        // 5) Unir a mano una pendiente desde la pantalla y reimportar
+        launch("import"); shot("62_pendientes", 2000)
+        val pend = kotlinx.coroutines.runBlocking { g.db.stats().unmatchedNow() }
+            .filter { it.title != "Cancion Inventada" && !it.title.startsWith("Otra Que") }
+        if (pend.isNotEmpty()) {
+            val u = pend.first()
+            d.wait(Until.findObject(By.text(u.title)), 5000)?.click()
+            shot("63_unir_dialogo", 1500)
+            val target = io.github.gato131313.music.data.backup.ImportCore.suggestions(
+                io.github.gato131313.music.data.backup.CsvRow(u.title, u.artist, u.plays, false), g.library.library.value.songs,
+            ).first()
+            val opt = d.wait(Until.findObject(By.text(target.title)), 4000)
+            val t0 = total(target.key)
+            if (opt != null) opt.click() else kotlinx.coroutines.runBlocking { g.backup.matchManually(u, target.key) }
+            Thread.sleep(1500)
+            note("unida a mano: \"${u.title}\" -> ${target.title} (+${u.plays}) por pantalla=${opt != null}")
+            val t1 = total(target.key)
+            check(t1 == t0 + u.plays, "unir a mano suma sus reproducciones ($t0 -> $t1)")
+            val r3 = kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
+            check(total(target.key) == t1, "tras reimportar, la unida a mano conserva su suma sin duplicar ($t1 -> ${total(target.key)})")
+            check(r3.unmatched.size == r1.unmatched.size - 1, "la unida a mano ya no sale como pendiente (${r1.unmatched.size} -> ${r3.unmatched.size})")
+            launch("import"); shot("64_tras_unir", 2000)
+        } else note("no hubo pendientes reales para unir a mano")
+        launch("smart/mas"); shot("65_mas_reproducidas", 2500)
+        launch("stats"); Thread.sleep(2000); click(By.text("Todo")); shot("66_estadisticas", 2500)
+    }
+
     @Test
     fun f_fase6() {
         d.executeShellCommand("mkdir -p $out")
         val ctx = inst.targetContext
         val g = MusicApp.graph
         val lib = SessionProbe.awaitLibrary()
-        step("importar csv") {
-            val pick = lib.songs.shuffled(java.util.Random(7)).take(40)
-            val sb = StringBuilder("titulo,artista,reproducciones,favorito\n")
-            pick.forEachIndexed { i, t ->
-                val dirtyTitle = if (i % 2 == 0) t.title.uppercase() + " (Official Video)" else t.title
-                val dirtyArtist = if (i % 3 == 0) (t.artist ?: "") + " - Topic" else (t.artist ?: "").lowercase()
-                sb.append('"').append(dirtyTitle).append("\",\"").append(dirtyArtist).append("\",").append(200 - i * 3).append(',').append(if (i < 5) "sí" else "").append('\n')
-            }
-            sb.append("Cancion Inventada,Nadie,9,\nOtra Que No Existe,Fulano,4,\n")
-            val f = java.io.File(ctx.cacheDir, "reproducciones.csv").apply { writeText(sb.toString()) }
-            val r = kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, android.net.Uri.fromFile(f)) }
-            note("importar: filas=${r.rows} empatadas=${r.plays.size} favoritos=${r.favorites.size} sin_empatar=${r.unmatched.size}")
-            r.unmatched.forEach { u -> note("  sin empatar: ${u.title} / ${u.artist} -> claves ${io.github.gato131313.music.data.backup.ImportCore.rowKeys(u)}") }
-            pick.take(40).forEach { t -> if (r.plays[t.key] == null) note("  canción no empatada: ${t.title} / ${t.artist} claves=${t.titleKey}|${t.artistKey}") }
-            launch("import"); shot("60_importar", 2500)
-            launch("smart/mas"); shot("61_mas_reproducidas", 2500)
-            launch("stats"); Thread.sleep(2000); click(By.text("Todo")); shot("62_estadisticas", 2500)
-        }
+        step("importar csv") { importarCsvComoAppVieja(lib) }
         step("respaldo") {
             val f = java.io.File(ctx.cacheDir, "respaldo.json")
             kotlinx.coroutines.runBlocking { g.backup.exportTo(ctx, android.net.Uri.fromFile(f)) }

@@ -12,3 +12,5 @@ keystore.properties
 /tools/testlib/
 /capturas-tmp/
 /entrega/
+/importar/
+*.csv.local

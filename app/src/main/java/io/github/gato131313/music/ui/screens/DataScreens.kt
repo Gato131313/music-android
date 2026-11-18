@@ -79,7 +79,12 @@ fun ImportScreen(a: UiActions) {
         busy = true
         scope.launch {
             summary = runCatching { g.backup.importCsv(ctx, uri) }.fold(
-                { r -> "Listo: ${r.rows} filas · ${r.plays.size} canciones con ${r.plays.values.sum()} reproducciones · ${r.favorites.size} favoritos · ${r.unmatched.size} sin empatar" },
+                { r ->
+                    val ok = r.rows - r.unmatched.size
+                    "Listo: se empataron $ok de ${r.rows} canciones (${r.plays.values.sum()} reproducciones sumadas" +
+                        (if (r.favorites.isNotEmpty()) ", ${r.favorites.size} favoritos" else "") + "). " +
+                        if (r.unmatched.isEmpty()) "No quedó ninguna pendiente." else "Faltan ${r.unmatched.size}: únelas abajo."
+                },
                 { e -> "No se pudo leer el archivo: ${e.message}" },
             )
             busy = false

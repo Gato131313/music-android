@@ -19,6 +19,11 @@ class ImportAndLrcTest {
             raw(2, "x.mp3", "Tu Falta De Querer", "Mon Laferte - Topic"),
             raw(3, "EMJAY - Xtraparticular (Video Oficial).mp3"),
             raw(4, "Reino De Amor.mp3", "Reino De Amor", "Mon Laferte"),
+            raw(5, "Tame Impala - Let It Happen (Official Video).mp3", "Tame Impala - Let It Happen (Official Video)", "tameimpalaVEVO"),
+            raw(6, "SIAMÉS \"No Lullaby\" [Official Video].mp3", "SIAMÉS \"No Lullaby\" [Official Video]", "<unknown>"),
+            raw(7, "Nunca Jamás Ft. San Pascualito Rey.mp3", "Nunca Jamás Ft. San Pascualito Rey", "Mon Laferte"),
+            raw(8, "Mon Laferte - Amor Completo.mp3"),
+            raw(9, "Mon Laferte - Amor Sin Fin.mp3"),
         ),
         UserEdits(),
     )
@@ -49,6 +54,35 @@ Cancion Que No Existe,Nadie,9,
         val patience = lib.songs.first { it.title == "Patience" }
         assertEquals(50, r.plays[patience.key])
         assertTrue(ImportCore.suggestions(r.unmatched[0], lib.songs).isNotEmpty())
+    }
+
+    @Test fun empataTitulosCortadosDeLaAppAnterior() {
+        val csv = """titulo,artista,reproducciones
+"Tame Impala - Let It H…",tameimpalaVEVO,186
+"SIAMÉS ""No Lullaby"" [...",<unknown>,181
+"Nunca Jamás Ft. San P...",Mon Laferte,526
+"Mon Laferte - Amor ...",<unknown>,5
+"""
+        val r = ImportCore.match(ImportCore.parseCsv(csv), lib.songs)
+        assertEquals(3, r.plays.size)
+        assertEquals(186, r.plays[lib.songs.first { it.fileName.startsWith("Tame") }.key])
+        assertEquals(181, r.plays[lib.songs.first { it.fileName.startsWith("SIAM") }.key])
+        assertEquals(526, r.plays[lib.songs.first { it.fileName.startsWith("Nunca") }.key])
+        // "Amor ..." podría ser dos canciones: se deja para unir a mano, con ambas como sugerencia
+        assertEquals(listOf("Mon Laferte - Amor ..."), r.unmatched.map { it.title })
+        val sug = ImportCore.suggestions(r.unmatched[0], lib.songs).take(2).map { it.title }.toSet()
+        assertEquals(setOf("Amor Completo", "Amor Sin Fin"), sug)
+    }
+
+    @Test fun unionManualSeRecuerdaAlReimportar() {
+        val rows = ImportCore.parseCsv("titulo,artista,reproducciones\n\"Mon Laferte - Amor ...\",<unknown>,5\n")
+        val target = lib.songs.first { it.title == "Amor Sin Fin" }
+        val manual = mapOf(ImportCore.rowId(rows[0]) to target.key)
+        val r1 = ImportCore.match(rows, lib.songs, manual)
+        val r2 = ImportCore.match(rows, lib.songs, manual)
+        assertEquals(mapOf(target.key to 5), r1.plays)
+        assertEquals(r1.plays, r2.plays)
+        assertTrue(r2.unmatched.isEmpty())
     }
 
     @Test fun csvSinEncabezado() {

@@ -1,6 +1,7 @@
 package io.github.gato131313.music.data.db
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -120,6 +121,10 @@ data class ImportUnmatched(
     val favorite: Boolean,
 )
 
+/** Uniones hechas a mano al importar (fila del CSV -> canción), para que reimportar las respete. */
+@Entity(tableName = "import_manual")
+data class ImportManual(@PrimaryKey val rowId: String, val key: String)
+
 data class RecentKey(val key: String, val at: Long)
 
 data class PlaylistWithCount(val id: Long, val name: String, val createdAt: Long, val count: Int, val firstKey: String?)
@@ -187,6 +192,8 @@ interface StatsDao {
     @Insert suspend fun insertUnmatched(u: List<ImportUnmatched>)
     @Query("DELETE FROM import_unmatched WHERE id = :id") suspend fun deleteUnmatched(id: Long)
     @Query("DELETE FROM import_unmatched") suspend fun clearUnmatched()
+    @Query("SELECT * FROM import_manual") suspend fun manualNow(): List<ImportManual>
+    @Upsert suspend fun upsertManual(m: ImportManual)
 }
 
 @Dao
@@ -247,6 +254,7 @@ interface ResetDao {
     @Query("DELETE FROM song_fx") suspend fun c11()
     @Query("DELETE FROM eq_preset") suspend fun c12()
     @Query("DELETE FROM import_unmatched") suspend fun c13()
+    @Query("DELETE FROM import_manual") suspend fun c14()
 }
 
 @Database(
@@ -254,9 +262,11 @@ interface ResetDao {
         MediaEntity::class, TrackEdit::class, ArtistAlias::class, ArtistReject::class, SplitDecision::class,
         PairOverride::class, Hidden::class, Favorite::class, PlayStat::class, PlayEvent::class, Playlist::class,
         PlaylistItem::class, LyricsCache::class, EqPreset::class, SongFx::class, ImportUnmatched::class,
+        ImportManual::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun media(): MediaDao
@@ -283,6 +293,7 @@ abstract class AppDatabase : RoomDatabase() {
         r.c11()
         r.c12()
         r.c13()
+        r.c14()
     }
 
     companion object {

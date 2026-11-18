@@ -13,6 +13,7 @@ import io.github.gato131313.music.data.db.ArtistReject
 import io.github.gato131313.music.data.db.EqPreset
 import io.github.gato131313.music.data.db.Favorite
 import io.github.gato131313.music.data.db.Hidden
+import io.github.gato131313.music.data.db.ImportManual
 import io.github.gato131313.music.data.db.ImportUnmatched
 import io.github.gato131313.music.data.db.PairOverride
 import io.github.gato131313.music.data.db.PlayEvent
@@ -56,6 +57,7 @@ data class BackupFile(
     val hidden: List<BkHidden> = emptyList(),
     val songFx: List<BkKV> = emptyList(),
     val eqPresets: List<BkKV> = emptyList(),
+    val importManual: List<BkKV> = emptyList(),
 )
 
 /** Respaldo completo de los datos del usuario (no incluye los archivos de música). */
@@ -79,6 +81,7 @@ class BackupManager(private val g: AppGraph) {
             hidden = db.user().hidden().first().map { BkHidden(it.path, it.isFolder) },
             songFx = db.user().songFx().first().map { BkKV(it.key, it.preset) },
             eqPresets = db.user().eqPresets().first().map { BkKV(it.name, it.gains) },
+            importManual = db.stats().manualNow().map { BkKV(it.rowId, it.key) },
         )
     }
 
@@ -110,6 +113,7 @@ class BackupManager(private val g: AppGraph) {
             b.hidden.forEach { db.user().upsertHidden(Hidden(it.path, it.folder)) }
             b.songFx.forEach { db.user().upsertSongFx(SongFx(it.k, it.v)) }
             b.eqPresets.forEach { db.user().upsertEqPreset(EqPreset(it.k, it.v)) }
+            b.importManual.forEach { db.stats().upsertManual(ImportManual(it.k, it.v)) }
         }
         if (b.settings.isNotBlank()) g.settings.import(b.settings)
         b
@@ -143,7 +147,10 @@ class BackupManager(private val g: AppGraph) {
     suspend fun importCsv(ctx: Context, uri: Uri): ImportResult = withContext(Dispatchers.IO) {
         val text = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() }
         val rows = ImportCore.parseCsv(text)
-        val res = ImportCore.match(rows, g.library.library.value.songs)
+        require(rows.isNotEmpty()) { "el archivo no trae filas de canciones" }
+        require(g.library.library.value.songs.isNotEmpty()) { "tu biblioteca aún está cargando, inténtalo en unos segundos" }
+        val manual = g.db.stats().manualNow().associate { it.rowId to it.key }
+        val res = ImportCore.match(rows, g.library.library.value.songs, manual)
         applyImport(res.plays, res.favorites)
         g.db.stats().clearUnmatched()
         g.db.stats().insertUnmatched(res.unmatched.map { ImportUnmatched(title = it.title, artist = it.artist, plays = it.plays, favorite = it.favorite) })
@@ -167,6 +174,8 @@ class BackupManager(private val g: AppGraph) {
         db.withTransaction {
             val s = db.stats().stat(key) ?: PlayStat(key)
             db.stats().upsertStat(s.copy(importedPlays = s.importedPlays + row.plays))
+            // Recordar la unión: si se importa el mismo archivo otra vez, esta fila ya cae aquí y no se duplica
+            db.stats().upsertManual(ImportManual(ImportCore.rowId(CsvRow(row.title, row.artist, row.plays, row.favorite)), key))
             if (row.favorite) db.user().upsertFavorite(Favorite(key))
             db.stats().deleteUnmatched(row.id)
         }

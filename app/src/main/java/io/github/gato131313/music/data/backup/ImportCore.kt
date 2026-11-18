@@ -70,19 +70,27 @@ object ImportCore {
         return out
     }
 
-    /** Empata filas con canciones usando nombres limpios (sin mayúsculas, acentos ni sufijos tipo "- Topic"). */
-    fun match(rows: List<CsvRow>, songs: List<Track>): ImportResult {
-        val byFull = HashMap<String, MutableList<Track>>()
-        val byTitle = HashMap<String, MutableList<Track>>()
-        for (t in songs) {
-            byFull.getOrPut(t.titleKey + "|" + t.artistKey) { ArrayList() } += t
-            byTitle.getOrPut(t.titleKey) { ArrayList() } += t
-        }
+    /** Clave estable de una fila (para recordar uniones hechas a mano). */
+    fun rowId(r: CsvRow): String = NameCleaner.key(r.title) + "|" + NameCleaner.key(artistOf(r))
+
+    /** La app anterior corta los títulos largos con "…": se empatan por el principio. */
+    fun isTruncated(s: String): Boolean = s.trimEnd().let { it.endsWith("…") || it.endsWith("...") }
+    private fun stripDots(s: String): String = s.trimEnd().trimEnd('…', '.', ' ')
+    private fun artistOf(r: CsvRow): String = if (NameCleaner.isUnknown(r.artist)) "" else r.artist.trim()
+
+    /**
+     * Empata filas con canciones usando nombres limpios (sin mayúsculas, acentos ni sufijos tipo "- Topic").
+     * [manual] = uniones hechas a mano antes (rowId -> clave de canción): se respetan al reimportar.
+     * Si varias filas caen en la misma canción se suman (eran archivos distintos en la app anterior).
+     */
+    fun match(rows: List<CsvRow>, songs: List<Track>, manual: Map<String, String> = emptyMap()): ImportResult {
+        val ix = Index(songs)
+        val byKey = songs.associateBy { it.key }
         val plays = HashMap<String, Int>()
         val favs = HashSet<String>()
         val unmatched = ArrayList<CsvRow>()
         for (r in rows) {
-            val t = find(r, byFull, byTitle, songs)
+            val t = manual[rowId(r)]?.let { byKey[it] } ?: find(r, ix)
             if (t == null) { unmatched += r; continue }
             if (r.plays > 0) plays.merge(t.key, r.plays, Int::plus)
             if (r.favorite) favs += t.key
@@ -92,29 +100,81 @@ object ImportCore {
 
     fun rowKeys(r: CsvRow): Pair<String, String> {
         // El título del CSV también puede traer "Artista - Canción" o ruido de YouTube
-        val c = NameCleaner.clean(r.title, r.title, r.artist.ifBlank { null }, null)
-        val artist = c.artist ?: r.artist
+        val title = stripDots(r.title)
+        val art = artistOf(r)
+        val c = NameCleaner.clean(title, title, art.ifBlank { null }, null)
+        val artist = c.artist ?: art
         return NameCleaner.titleKey(c.title) to NameCleaner.artistKey(NameCleaner.cleanArtist(artist) ?: artist)
     }
 
-    private fun find(r: CsvRow, byFull: Map<String, List<Track>>, byTitle: Map<String, List<Track>>, songs: List<Track>): Track? {
-        val (tk, ak) = rowKeys(r)
-        byFull["$tk|$ak"]?.let { return it.first() }
-        val sameTitle = byTitle[tk].orEmpty()
-        if (ak.isNotEmpty()) {
-            sameTitle.firstOrNull { it.artistKey.isNotEmpty() && (it.artistKey.contains(ak) || ak.contains(it.artistKey)) }?.let { return it }
-            // Tolerar una errata en el título del mismo artista
-            if (tk.length >= 6) songs.firstOrNull { it.artistKey == ak && NameCleaner.levenshtein(it.titleKey, tk, 2) <= 2 }?.let { return it }
+    private class Index(val songs: List<Track>) {
+        val byFull = HashMap<String, MutableList<Track>>()
+        val byTitle = HashMap<String, MutableList<Track>>()
+        /** Nombres tal cual los veía la app anterior (etiqueta o nombre de archivo), en clave. */
+        val rawKeys: List<List<String>>
+        val rawArtist: List<String>
+        init {
+            for (t in songs) {
+                byFull.getOrPut(t.titleKey + "|" + t.artistKey) { ArrayList() } += t
+                byTitle.getOrPut(t.titleKey) { ArrayList() } += t
+            }
+            rawKeys = songs.map { t ->
+                val file = t.fileName.substringBeforeLast('.')
+                listOfNotNull(t.rawTitle, file, t.title, t.artist?.let { "$it - ${t.title}" })
+                    .map { NameCleaner.key(it) }.filter { it.isNotEmpty() }.distinct()
+            }
+            rawArtist = songs.map { NameCleaner.key(it.rawArtist) }
         }
-        if (sameTitle.size == 1 && (ak.isEmpty() || sameTitle[0].artistKey.isEmpty())) return sameTitle[0]
-        return null
+    }
+
+    private fun sameArtist(t: Track, ak: String, rawAk: String, rawArtist: String): Boolean =
+        ak.isEmpty() || (t.artistKey.isNotEmpty() && (t.artistKey.contains(ak) || ak.contains(t.artistKey))) ||
+            (rawAk.isNotEmpty() && rawArtist == rawAk)
+
+    private fun find(r: CsvRow, ix: Index): Track? {
+        val (tk, ak) = rowKeys(r)
+        val rawTitle = stripDots(r.title)
+        val rawK = NameCleaner.key(rawTitle)
+        val rawAk = NameCleaner.key(artistOf(r))
+        val songs = ix.songs
+        if (!isTruncated(r.title)) {
+            ix.byFull["$tk|$ak"]?.let { return it.first() }
+            val sameTitle = ix.byTitle[tk].orEmpty()
+            if (ak.isNotEmpty()) {
+                sameTitle.firstOrNull { it.artistKey.isNotEmpty() && (it.artistKey.contains(ak) || ak.contains(it.artistKey)) }?.let { return it }
+            }
+            // Mismo nombre que veía la app anterior (etiqueta o archivo)
+            val raw = songs.indices.filter { rawK.isNotEmpty() && rawK in ix.rawKeys[it] }
+            pick(raw.filter { sameArtist(songs[it], ak, rawAk, ix.rawArtist[it]) }.map { songs[it] })?.let { return it }
+            if (ak.isNotEmpty() && tk.length >= 6) songs.firstOrNull { it.artistKey == ak && NameCleaner.levenshtein(it.titleKey, tk, 2) <= 2 }?.let { return it }
+            if (sameTitle.size == 1 && (ak.isEmpty() || sameTitle[0].artistKey.isEmpty())) return sameTitle[0]
+            pick(raw.map { songs[it] })?.let { return it }
+            return null
+        }
+        // Título cortado: buscar canciones cuyo nombre empiece igual
+        if (rawK.length < 4 && tk.length < 4) return null
+        val cands = songs.indices.filter { i ->
+            ix.rawKeys[i].any { (rawK.length >= 4 && it.startsWith(rawK)) } ||
+                (tk.length >= 4 && songs[i].titleKey.startsWith(tk) && (ak.isEmpty() || songs[i].artistKey == ak))
+        }
+        val withArtist = cands.filter { sameArtist(songs[it], ak, rawAk, ix.rawArtist[it]) }.map { songs[it] }
+        return pick(withArtist) ?: if (rawAk.isEmpty()) null else pick(cands.map { songs[it] }.filter { it.artistKey.isEmpty() })
+    }
+
+    /** Una sola canción (o varias copias del mismo título y artista): esa. Si hay duda, ninguna. */
+    private fun pick(c: List<Track>): Track? {
+        if (c.isEmpty()) return null
+        val first = c.first()
+        return if (c.all { it.titleKey == first.titleKey && it.artistKey == first.artistKey }) first else null
     }
 
     /** Sugerencias para empatar a mano una fila (las 5 más parecidas). */
     fun suggestions(r: CsvRow, songs: List<Track>): List<Track> {
         val (tk, ak) = rowKeys(r)
+        val cut = isTruncated(r.title)
         return songs.asSequence().map { t ->
-            var score = NameCleaner.levenshtein(t.titleKey, tk, 12).toFloat()
+            val tt = if (cut && t.titleKey.length > tk.length) t.titleKey.substring(0, tk.length) else t.titleKey
+            var score = NameCleaner.levenshtein(tt, tk, 12).toFloat()
             if (t.titleKey.contains(tk) || tk.contains(t.titleKey)) score -= 4
             if (ak.isNotEmpty() && t.artistKey == ak) score -= 5
             t to score
