@@ -41,6 +41,12 @@ GitHub Actions y "Buscar actualizaciones" sin claves.
   Pruebas: `FxProcessorTest` (mide la respuesta real).
 - Letras: `lyrics/Lyrics.kt` pide a `https://yum-music.vercel.app/api/public/lyrics` y guarda en Room.
 - Respaldo/importar: `data/backup/` (CSV de la app anterior, respaldo JSON, copia diaria en Descargas/MUSIC).
+  Importar: las reproducciones van en `importedPlays` (se SUMAN a las propias); reimportar el mismo archivo las fija,
+  no las duplica. Títulos cortados con "…" se empatan por el principio del nombre (etiqueta o archivo). Filas que se ven
+  iguales (mismo título cortado + artista) nunca se empatan solas: van a "unir a mano". Las uniones a mano se guardan en
+  `import_manual` (BD versión 2, migración automática 1→2) con clave titulo|artista|reproducciones#n.
+  Datos privados del hermano (video, CSV): carpeta `importar/`, fuera de git. Herramientas en `importar/trabajo/`
+  (cosido del video por desplazamiento + mediana, lecturas A/B, `merge.py`, `build_csv.py`).
 - Actualizaciones: `update/UpdateChecker.kt` (GitHub Releases `latest`, asset .apk, instalador de Android).
 
 ## Endpoint público de letras (en yum-music)
