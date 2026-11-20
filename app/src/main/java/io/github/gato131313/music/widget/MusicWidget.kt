@@ -303,9 +303,13 @@ private fun Progress(s: WidgetState) {
 @Composable
 private fun Chrono(s: WidgetState) {
     val rv = RemoteViews(MusicApp.graph.app.packageName, R.layout.widget_chrono).apply {
-        setChronometer(R.id.chrono, SystemClock.elapsedRealtime() - s.posMs, "%s / " + fmt(s.durMs), s.playing)
+        setChronometer(R.id.chrono, SystemClock.elapsedRealtime() - s.posMs, null, s.playing)
     }
-    AndroidRemoteViews(rv, GlanceModifier.fillMaxWidth().height(16.dp))
+    Row(GlanceModifier.fillMaxWidth().height(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        AndroidRemoteViews(rv, GlanceModifier.width(70.dp).height(16.dp))
+        Spacer(GlanceModifier.defaultWeight())
+        Text(fmt(s.durMs), style = TextStyle(color = WHITE3, fontSize = 11.sp))
+    }
 }
 
 private fun fmt(ms: Long): String {
