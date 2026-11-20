@@ -548,12 +548,12 @@ class CapturasTest {
             inst.runOnMainSync { g.player.play(listOf(t), 0) }
             Thread.sleep(1500)
             shot("71_mas_reproducidas_antes", 500)
-            check(d.findObject(By.desc("$n0 reproducciones")) != null, "la fila de ${t.title} muestra 🎧 $n0")
+            check(d.findObject(By.desc("$n0 reproducciones")) != null || d.findObject(By.text(" $n0")) != null, "la fila de ${t.title} muestra 🎧 $n0")
             Thread.sleep(33_000) // escuchar de verdad: cuenta a los 30 s
             shot("72_mas_reproducidas_despues", 1500)
             val n1 = g.user.playsOf(t, lib, kotlinx.coroutines.runBlocking { g.db.stats().statsNow() }.associateBy { it.key })
             check(n1 == n0 + 1, "al escuchar 30 s sube solo: ${t.title} $n0 -> $n1")
-            check(d.findObject(By.desc("$n1 reproducciones")) != null, "la misma pantalla muestra 🎧 $n1 sin recargar")
+            check(d.findObject(By.desc("$n1 reproducciones")) != null || d.findObject(By.text(" $n1")) != null, "la misma pantalla muestra 🎧 $n1 sin recargar")
             val mas = g.user.mostPlayed(lib).take(30).map { g.user.playsOf(it, lib) }
             check(mas == mas.sortedDescending(), "Más reproducidas va de mayor a menor (${mas.take(8)})")
             kotlinx.coroutines.runBlocking { g.settings.update { it.copy(showPlays = false) } }

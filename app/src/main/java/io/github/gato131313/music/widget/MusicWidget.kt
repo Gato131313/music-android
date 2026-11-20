@@ -305,7 +305,7 @@ private fun Chrono(s: WidgetState) {
     val rv = RemoteViews(MusicApp.graph.app.packageName, R.layout.widget_chrono).apply {
         setChronometer(R.id.chrono, SystemClock.elapsedRealtime() - s.posMs, "%s / " + fmt(s.durMs), s.playing)
     }
-    AndroidRemoteViews(rv)
+    AndroidRemoteViews(rv, GlanceModifier.fillMaxWidth().height(16.dp))
 }
 
 private fun fmt(ms: Long): String {
