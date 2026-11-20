@@ -42,9 +42,22 @@ GitHub Actions y "Buscar actualizaciones" sin claves.
 - Letras: `lyrics/Lyrics.kt` pide a `https://yum-music.vercel.app/api/public/lyrics` y guarda en Room.
 - Respaldo/importar: `data/backup/` (CSV de la app anterior, respaldo JSON, copia diaria en Descargas/MUSIC).
   Importar: las reproducciones van en `importedPlays` (se SUMAN a las propias); reimportar el mismo archivo las fija,
-  no las duplica. Títulos cortados con "…" se empatan por el principio del nombre (etiqueta o archivo). Filas que se ven
-  iguales (mismo título cortado + artista) nunca se empatan solas: van a "unir a mano". Las uniones a mano se guardan en
-  `import_manual` (BD versión 2, migración automática 1→2) con clave titulo|artista|reproducciones#n.
+  no las duplica. Empate 100 % automático en `data/backup/ImportMatcher.kt`: 1 a 1, puntaje por fila/canción (título o
+  su principio si venía cortado con "…", artista de etiqueta/Topic/VEVO, archivo, carpeta, audio>video, parecido),
+  eliminación iterativa y luego húngaro por grupos conectados; solo se descartan filas sin ninguna canción parecida.
+  Uniones guardadas en `import_manual` (BD v3: título, artista, plays, how=MANO/SEGURO/PROBABLE); las MANO se respetan
+  al reimportar; las PROBABLE se pueden corregir en Importar datos (`relink`). Filas pendientes de versiones viejas
+  (`import_unmatched.reason IS NULL`) se empatan solas al abrir la app (`rematchPending`) y se avisa con un diálogo.
+  Simulación: `ImportSimTest` (JVM) y `CapturasTest.importarCsvComoAppVieja` (emulador, 980 filas): 977/977 + 3 notas de voz.
+- Total de reproducciones: `UserDataRepository.playsOf` (importadas + nuevas; canción + su video emparejado juntos).
+  Contador 🎧 en `TrackRow` (`PlayCount`), en vivo; "Más reproducidas" ordenada por ese total. Ajuste `showPlays`.
+- Portadas del sistema: `playback/ArtProvider.kt` siempre da bitmap (portada, fotograma del video emparejado o generada
+  con degradado + inicial); `ArtBitmapLoader` lo usa, Media3 lo pasa como bitmap a la sesión. Botones propios en la
+  notificación: "me gusta" y aleatorio (`PlaybackService.buttons()`, comandos music.like / music.shuffle).
+- Widget: `widget/MusicWidget.kt` (Glance, SizeMode.Responsive: chico/ancho/mediano/grande), estilos portada/cristal/
+  minimo + opacidad (Ajustes), fondo pintado como bitmap con Palette, tiempo con Chronometer (AndroidRemoteViews con
+  tamaño FIJO: si no, ocupa todo el alto), refresco cada 20 s solo mientras suena. Vista previa: `layout/widget_preview.xml`
+  (en widgets no se permite `<View>` suelto). El CI dibuja cada tamaño × estilo con `GlanceRemoteViews` y pone uno real.
   Datos privados del hermano (video, CSV): carpeta `importar/`, fuera de git. Herramientas en `importar/trabajo/`
   (cosido del video por desplazamiento + mediana, lecturas A/B, `merge.py`, `build_csv.py`).
 - Actualizaciones: `update/UpdateChecker.kt` (GitHub Releases `latest`, asset .apk, instalador de Android).
@@ -71,3 +84,4 @@ GitHub Actions y "Buscar actualizaciones" sin claves.
 - Fase 4 ✔ Inicio, listas, menús, temas, ajustes, ocultos.
 - Fase 5 ✔ portadas (disco/cuadrada/aurora), letras, modo conductor, widget, estadísticas, Canción+Video.
 - Fase 6 ✔ importar CSV, respaldo, actualizaciones, APK firmado.
+- 1.1.0 (17 nov) importar títulos cortados. 1.2.0 (20 nov) empate automático, contador 🎧, widget nuevo, portada siempre.
