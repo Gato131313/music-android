@@ -76,6 +76,7 @@ class PlaybackService : MediaSessionService() {
     private var lastTick = 0L
     private var lastSave = 0L
     private var widgetJob: kotlinx.coroutines.Job? = null
+    private var lastWidget = 0L
 
     private fun refreshWidget() {
         widgetJob?.cancel()
@@ -99,6 +100,9 @@ class PlaybackService : MediaSessionService() {
         setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().apply { setSmallIcon(R.drawable.ic_u_mark) })
         g.hub.player = player
         player.addListener(listener)
+        // "Me gusta" y aleatorio en la notificación / panel de controles / pantalla de bloqueo
+        scope.launch { g.user.favorites.collect { updateButtons() } }
+        updateButtons()
         // Velocidad / tono desde Ajustes
         scope.launch {
             g.settings.flow.map { it.speed to it.pitchSemis }.distinctUntilChanged().collect { (sp, st) ->
@@ -149,7 +153,15 @@ class PlaybackService : MediaSessionService() {
             counted = false
             saveQueue()
             refreshWidget()
+            updateButtons()
         }
+
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+            updateButtons()
+            refreshWidget()
+        }
+
+        override fun onRepeatModeChanged(repeatMode: Int) = refreshWidget()
 
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) saveQueue()
@@ -198,6 +210,8 @@ class PlaybackService : MediaSessionService() {
                     accMs = 0
                 }
                 if (now - lastSave > 15_000) saveQueue()
+                // Barra de progreso del widget: cada 20 s (el tiempo lo cuenta el sistema con Chronometer)
+                if (now - lastWidget > 20_000) { lastWidget = now; refreshWidget() }
             }
             lastTick = now
             crossfader.tick()
@@ -231,7 +245,55 @@ class PlaybackService : MediaSessionService() {
         g.hub.saveQueue(SavedQueue(ids, videos, player.currentMediaItemIndex, player.currentPosition, player.shuffleModeEnabled, player.repeatMode))
     }
 
+    private fun currentTrack(): Track? = trackOf(player.currentMediaItem)
+
+    /** Botones propios: "me gusta" (corazón) y aleatorio. */
+    private fun buttons(): List<androidx.media3.session.CommandButton> {
+        val fav = currentTrack()?.let { g.user.isFavorite(it.key) } == true
+        val shuffle = player.shuffleModeEnabled
+        return listOf(
+            androidx.media3.session.CommandButton.Builder()
+                .setDisplayName(if (fav) "Quitar de me gusta" else "Me gusta")
+                .setIconResId(if (fav) R.drawable.ic_n_heart_on else R.drawable.ic_n_heart)
+                .setSessionCommand(androidx.media3.session.SessionCommand(CMD_LIKE, android.os.Bundle.EMPTY))
+                .build(),
+            androidx.media3.session.CommandButton.Builder()
+                .setDisplayName(if (shuffle) "Aleatorio activado" else "Aleatorio")
+                .setIconResId(if (shuffle) R.drawable.ic_n_shuffle_on else R.drawable.ic_n_shuffle)
+                .setSessionCommand(androidx.media3.session.SessionCommand(CMD_SHUFFLE, android.os.Bundle.EMPTY))
+                .build(),
+        )
+    }
+
+    private fun updateButtons() {
+        session?.setCustomLayout(buttons())
+    }
+
     private inner class SessionCallback : MediaSession.Callback {
+        override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
+            val cmds = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                .add(androidx.media3.session.SessionCommand(CMD_LIKE, android.os.Bundle.EMPTY))
+                .add(androidx.media3.session.SessionCommand(CMD_SHUFFLE, android.os.Bundle.EMPTY))
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(cmds)
+                .setCustomLayout(buttons())
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: androidx.media3.session.SessionCommand,
+            args: android.os.Bundle,
+        ): ListenableFuture<androidx.media3.session.SessionResult> {
+            when (customCommand.customAction) {
+                CMD_LIKE -> currentTrack()?.let { t -> scope.launch { g.user.toggleFavorite(t); updateButtons(); refreshWidget() } }
+                CMD_SHUFFLE -> player.shuffleModeEnabled = !player.shuffleModeEnabled
+            }
+            updateButtons()
+            return Futures.immediateFuture(androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS))
+        }
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
@@ -369,6 +431,8 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         private const val TAG = "PlaybackService"
+        const val CMD_LIKE = "music.like"
+        const val CMD_SHUFFLE = "music.shuffle"
         fun semitonesToPitch(st: Float): Float = 2.0.pow(st / 12.0).toFloat()
     }
 }

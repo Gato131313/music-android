@@ -2,6 +2,7 @@ package io.github.gato131313.music.data.db
 
 import android.content.Context
 import androidx.room.AutoMigration
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -119,11 +120,21 @@ data class ImportUnmatched(
     val artist: String,
     val plays: Int,
     val favorite: Boolean,
+    /** Por qué se descartó sola (null = pendiente de una versión anterior). */
+    val reason: String? = null,
 )
 
 /** Uniones hechas a mano al importar (fila del CSV -> canción), para que reimportar las respete. */
 @Entity(tableName = "import_manual")
-data class ImportManual(@PrimaryKey val rowId: String, val key: String)
+data class ImportManual(
+    @PrimaryKey val rowId: String,
+    val key: String,
+    @ColumnInfo(defaultValue = "") val title: String = "",
+    @ColumnInfo(defaultValue = "") val artist: String = "",
+    @ColumnInfo(defaultValue = "0") val plays: Int = 0,
+    /** MANO, SEGURO o PROBABLE (ver How). */
+    @ColumnInfo(defaultValue = "MANO") val how: String = "MANO",
+)
 
 data class RecentKey(val key: String, val at: Long)
 
@@ -194,6 +205,10 @@ interface StatsDao {
     @Query("DELETE FROM import_unmatched") suspend fun clearUnmatched()
     @Query("SELECT * FROM import_manual") suspend fun manualNow(): List<ImportManual>
     @Upsert suspend fun upsertManual(m: ImportManual)
+    @Upsert suspend fun upsertManuals(m: List<ImportManual>)
+    @Query("SELECT * FROM import_manual WHERE how != 'MANO' OR title != '' ORDER BY plays DESC") fun links(): Flow<List<ImportManual>>
+    @Query("DELETE FROM import_manual WHERE how != 'MANO'") suspend fun clearAutoLinks()
+    @Query("SELECT * FROM import_unmatched WHERE reason IS NULL") suspend fun pendingNow(): List<ImportUnmatched>
 }
 
 @Dao
@@ -264,9 +279,9 @@ interface ResetDao {
         PlaylistItem::class, LyricsCache::class, EqPreset::class, SongFx::class, ImportUnmatched::class,
         ImportManual::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun media(): MediaDao

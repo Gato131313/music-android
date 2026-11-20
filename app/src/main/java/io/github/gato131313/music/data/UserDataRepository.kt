@@ -83,6 +83,19 @@ class UserDataRepository(private val db: AppDatabase, private val scope: Corouti
 
     fun totalPlays(key: String): Int = stats.value[key]?.let { it.plays + it.importedPlays } ?: 0
 
+    /**
+     * Total de una canción: importadas del CSV + escuchadas aquí. Canción y su video emparejado cuentan como una
+     * sola (da igual cuál de los dos se importó o se escucha).
+     */
+    fun playsOf(t: Track, lib: Library, s: Map<String, PlayStat> = stats.value): Int {
+        fun one(k: String) = s[k]?.let { it.plays + it.importedPlays } ?: 0
+        val pair = t.pairId?.let { lib.byId[it] }
+        return one(t.key) + (pair?.let { one(it.key) } ?: 0)
+    }
+
+    /** Canción que representa a la pareja canción+video (la de audio). */
+    private fun canonical(t: Track, lib: Library): Track = if (t.isVideo) t.pairId?.let { lib.byId[it] }?.takeIf { !it.isVideo } ?: t else t
+
     // ---------- Listas inteligentes ----------
     fun favoriteTracks(lib: Library): List<Track> = favoritesOrdered.value.mapNotNull { lib.byKey[it] }
 
@@ -96,11 +109,18 @@ class UserDataRepository(private val db: AppDatabase, private val scope: Corouti
 
     fun recentlyPlayed(lib: Library): List<Track> = recent.value.mapNotNull { lib.byKey[it.key] }.filter { !it.isVideo || it.pairId == null }.take(500)
 
-    fun mostPlayed(lib: Library): List<Track> = stats.value.values.asSequence()
-        .filter { it.plays + it.importedPlays > 0 }
-        .sortedByDescending { it.plays + it.importedPlays }
-        .mapNotNull { lib.byKey[it.key] }
-        .take(500).toList()
+    /** Ordenadas por el total (importadas + nuevas), de mayor a menor; canción+video una sola vez. */
+    fun mostPlayed(lib: Library): List<Track> {
+        val s = stats.value
+        return s.values.asSequence()
+            .filter { it.plays + it.importedPlays > 0 }
+            .mapNotNull { lib.byKey[it.key] }
+            .map { canonical(it, lib) }
+            .distinctBy { it.key }
+            .map { it to playsOf(it, lib, s) }
+            .sortedByDescending { it.second }
+            .take(500).map { it.first }.toList()
+    }
 
     // ---------- Playlists ----------
     suspend fun createPlaylist(name: String, keys: List<String> = emptyList()): Long {

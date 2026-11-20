@@ -269,7 +269,7 @@ fun AddToPlaylistDialog(tracks: List<Track>, onDismiss: () -> Unit) {
 @Composable
 fun TrackInfoDialog(t: Track, onDismiss: () -> Unit) {
     val c = LocalAppColors.current
-    val plays = MusicApp.graph.user.totalPlays(t.key)
+    val plays = MusicApp.graph.user.playsOf(t, MusicApp.graph.library.library.value)
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.bg2,

@@ -12,6 +12,10 @@ import io.github.gato131313.music.playback.PlayerController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /** Dependencias de toda la app (sin framework de inyección: es una app pequeña). */
 class AppGraph(val app: Application) {
@@ -27,4 +31,12 @@ class AppGraph(val app: Application) {
     val lyrics = io.github.gato131313.music.lyrics.LyricsRepository(this)
     val backup = io.github.gato131313.music.data.backup.BackupManager(this)
     val updates = io.github.gato131313.music.update.UpdateChecker(this)
+
+    init {
+        // Cambiar el estilo o la opacidad del widget en Ajustes lo redibuja
+        scope.launch {
+            settings.flow.map { it.widgetStyle to it.widgetOpacity }.distinctUntilChanged().drop(1)
+                .collect { io.github.gato131313.music.widget.MusicWidget.refresh(app) }
+        }
+    }
 }

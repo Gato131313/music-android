@@ -60,12 +60,20 @@ class ArtBitmapLoader(private val ctx: Context) : BitmapLoader {
         BitmapFactory.decodeByteArray(data, 0, data.size) ?: throw IOException("no se pudo decodificar")
     }
 
+    /**
+     * Siempre devuelve un bitmap (portada real, fotograma del video emparejado o portada generada), así la
+     * notificación, el panel de controles y la pantalla de bloqueo nunca quedan sin imagen. Media3 pasa este
+     * bitmap a la sesión del sistema (no la ruta del archivo, que el sistema a veces no puede leer).
+     */
     override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> {
         if (uri.scheme != ART_SCHEME) return Futures.immediateFailedFuture(IOException("esquema no soportado"))
         return exec.submit<Bitmap> {
             val isVideo = uri.host == "v"
             val id = uri.lastPathSegment?.toLongOrNull() ?: throw IOException("id")
-            load(id, isVideo) ?: throw IOException("sin portada")
+            val lib = io.github.gato131313.music.MusicApp.graph.library.library.value
+            val t = lib.byId[id]
+            if (t != null) ArtProvider.get(ctx, t, lib, 512)
+            else load(id, isVideo) ?: throw IOException("sin portada")
         }
     }
 

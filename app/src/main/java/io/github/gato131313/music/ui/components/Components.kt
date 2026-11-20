@@ -1,5 +1,8 @@
 package io.github.gato131313.music.ui.components
 
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.runtime.collectAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.OndemandVideo
@@ -160,7 +164,25 @@ fun TrackRow(
                 )
             }
         }
+        PlayCount(track)
         IconButton(onClick = onMenu) { Icon(Icons.Rounded.MoreVert, "Opciones", tint = c.text2) }
+    }
+}
+
+/** 🎧 + total de reproducciones (importadas + nuevas; canción y su video juntos). Se actualiza en vivo. */
+@Composable
+fun PlayCount(track: Track) {
+    val g = io.github.gato131313.music.MusicApp.graph
+    val settings by g.settings.flow.collectAsState()
+    if (!settings.showPlays) return
+    val stats by g.user.stats.collectAsState()
+    val lib by g.library.library.collectAsState()
+    val n = g.user.playsOf(track, lib, stats)
+    if (n <= 0) return
+    val c = LocalAppColors.current
+    Row(Modifier.padding(start = 6.dp).semantics(mergeDescendants = true) { contentDescription = "$n reproducciones" }, verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.Headphones, null, tint = c.text2, modifier = Modifier.size(15.dp))
+        Text(" $n", color = c.text2, fontSize = 13.sp, maxLines = 1)
     }
 }
 

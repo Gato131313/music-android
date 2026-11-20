@@ -64,13 +64,16 @@ Cancion Que No Existe,Nadie,9,
 "Mon Laferte - Amor ...",<unknown>,5
 """
         val r = ImportCore.match(ImportCore.parseCsv(csv), lib.songs)
-        assertEquals(3, r.plays.size)
+        assertEquals(4, r.plays.size)
         assertEquals(186, r.plays[lib.songs.first { it.fileName.startsWith("Tame") }.key])
         assertEquals(181, r.plays[lib.songs.first { it.fileName.startsWith("SIAM") }.key])
         assertEquals(526, r.plays[lib.songs.first { it.fileName.startsWith("Nunca") }.key])
-        // "Amor ..." podría ser dos canciones: se deja para unir a mano, con ambas como sugerencia
-        assertEquals(listOf("Mon Laferte - Amor ..."), r.unmatched.map { it.title })
-        val sug = ImportCore.suggestions(r.unmatched[0], lib.songs).take(2).map { it.title }.toSet()
+        // "Amor ..." podría ser dos canciones: ya no queda pendiente, va a la más probable
+        assertTrue(r.unmatched.isEmpty())
+        val amor = r.assignment.links.first { it.row.title.startsWith("Mon Laferte - Amor") }
+        assertTrue(amor.track.title in setOf("Amor Completo", "Amor Sin Fin"))
+        assertEquals(io.github.gato131313.music.data.backup.How.PROBABLE, amor.how)
+        val sug = ImportCore.suggestions(amor.row, lib.songs).take(2).map { it.title }.toSet()
         assertEquals(setOf("Amor Completo", "Amor Sin Fin"), sug)
     }
 
@@ -85,19 +88,20 @@ Cancion Que No Existe,Nadie,9,
         assertTrue(r2.unmatched.isEmpty())
     }
 
-    @Test fun filasIdenticasNoSeAdivinanYCadaUnaRecuerdaSuUnion() {
+    @Test fun filasIdenticasVanUnaACadaCancionYRespetanLasElegidasAMano() {
         val rows = ImportCore.parseCsv("titulo,artista,reproducciones\n\"Mon Laferte - Amor …\",Mon Laferte,52\n\"Mon Laferte - Amor …\",Mon Laferte,52\n")
         val a = lib.songs.first { it.title == "Amor Completo" }
         val b = lib.songs.first { it.title == "Amor Sin Fin" }
-        assertEquals(2, ImportCore.match(rows, lib.songs).unmatched.size)
-        val uno = ImportCore.match(rows, lib.songs, mapOf(ImportCore.manualId(rows[0], 0) to a.key))
-        assertEquals(mapOf(a.key to 52), uno.plays)
-        assertEquals(1, uno.unmatched.size)
-        val dos = ImportCore.match(rows, lib.songs, mapOf(ImportCore.manualId(rows[0], 0) to a.key, ImportCore.manualId(rows[1], 1) to b.key))
-        assertEquals(mapOf(a.key to 52, b.key to 52), dos.plays)
-        // Mismo título cortado con números distintos: tampoco se suman solas a una misma canción
-        val dist = ImportCore.parseCsv("titulo,artista,reproducciones\nPatience,Guns N' Roses,180\nPatience,Guns N' Roses,102\n")
-        assertEquals(2, ImportCore.match(dist, lib.songs).unmatched.size)
+        // 1 a 1: dos filas iguales y dos canciones posibles -> una a cada una, nada pendiente
+        assertEquals(mapOf(a.key to 52, b.key to 52), ImportCore.match(rows, lib.songs).plays)
+        // Si una se eligió a mano, la otra toma la que queda
+        val uno = ImportCore.match(rows, lib.songs, mapOf(ImportCore.manualId(rows[0], 0) to b.key))
+        assertEquals(mapOf(a.key to 52, b.key to 52), uno.plays)
+        assertEquals(io.github.gato131313.music.data.backup.How.SEGURO, uno.assignment.links.first { it.index == 1 }.how)
+        // Notas de voz que la app no muestra: se descartan solas, con motivo
+        val voz = ImportCore.match(ImportCore.parseCsv("titulo,artista,reproducciones\ngrabando #99,<unknown>,1\n"), lib.songs)
+        assertEquals(listOf("grabando #99"), voz.unmatched.map { it.title })
+        assertEquals(io.github.gato131313.music.data.backup.ImportMatcher.NO_CANDIDATE, voz.assignment.discarded[0].reason)
     }
 
     @Test fun csvSinEncabezado() {

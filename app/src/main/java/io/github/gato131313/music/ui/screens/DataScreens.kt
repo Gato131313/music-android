@@ -44,8 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.gato131313.music.MusicApp
 import io.github.gato131313.music.data.backup.CsvRow
+import io.github.gato131313.music.data.backup.How
 import io.github.gato131313.music.data.backup.ImportCore
+import io.github.gato131313.music.data.backup.ImportMatcher
 import io.github.gato131313.music.data.clean.NameCleaner
+import io.github.gato131313.music.data.db.ImportManual
 import io.github.gato131313.music.data.db.ImportUnmatched
 import io.github.gato131313.music.ui.components.ArtImage
 import io.github.gato131313.music.ui.components.GlassScaffold
@@ -64,40 +67,48 @@ fun PrimaryButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
     ) { Text(text, color = c.onAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
 }
 
+/** Texto del resultado de importar (también lo usa el aviso tras actualizar la app). */
+fun importSummary(total: Int, linked: Int, discarded: List<Pair<String, String>>): String {
+    if (discarded.isEmpty()) return "Se empataron todas: $linked de $total canciones ya tienen sus reproducciones de tu app anterior."
+    val names = discarded.take(4).joinToString(", ") { "\"${it.first}\"" } + if (discarded.size > 4) "…" else ""
+    return "Se empataron $linked de $total. Se descartaron ${discarded.size} porque no hay en el teléfono ninguna canción " +
+        "con un nombre parecido (por ejemplo notas de voz): $names."
+}
+
 @Composable
 fun ImportScreen(a: UiActions) {
     val g = MusicApp.graph
     val c = LocalAppColors.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val unmatched by g.db.stats().unmatched().collectAsState(initial = emptyList())
+    val discarded by g.db.stats().unmatched().collectAsState(initial = emptyList())
+    val links by g.db.stats().links().collectAsState(initial = emptyList())
+    val lib = libraryState()
     var busy by remember { mutableStateOf(false) }
     var summary by remember { mutableStateOf<String?>(null) }
     var pick by remember { mutableStateOf<ImportUnmatched?>(null) }
+    var fix by remember { mutableStateOf<ImportManual?>(null) }
+    var showLinks by remember { mutableStateOf(false) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         busy = true
         scope.launch {
             summary = runCatching { g.backup.importCsv(ctx, uri) }.fold(
-                { r ->
-                    val ok = r.rows - r.unmatched.size
-                    "Listo: se empataron $ok de ${r.rows} canciones (${r.plays.values.sum()} reproducciones sumadas" +
-                        (if (r.favorites.isNotEmpty()) ", ${r.favorites.size} favoritos" else "") + "). " +
-                        if (r.unmatched.isEmpty()) "No quedó ninguna pendiente." else "Faltan ${r.unmatched.size}: únelas abajo."
-                },
+                { r -> "Listo. " + importSummary(r.rows, r.assignment.links.size, r.assignment.discarded.map { it.row.title to it.reason }) },
                 { e -> "No se pudo leer el archivo: ${e.message}" },
             )
             busy = false
         }
     }
+    val probable = links.filter { it.how == How.PROBABLE.name }
     GlassScaffold("Importar datos", onBack = { a.back() }) { pad ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = pad.calculateTopPadding() + 8.dp, bottom = pad.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Card("Reproducciones de tu app anterior") {
                     Text(
                         "Elige un archivo CSV con las columnas titulo, artista, reproducciones (y opcional favorito). " +
-                            "Se empatan con tus canciones aunque cambien mayúsculas, acentos o traigan \"- Topic\" u \"(Official Video)\". " +
-                            "Las reproducciones se suman a tus estadísticas y a \"Más reproducidas\". Si importas el mismo archivo otra vez, no se duplica.",
+                            "Cada fila se une sola con una canción de tu teléfono, aunque el título venga cortado con \"…\" o el artista diga \"<unknown>\". " +
+                            "Las reproducciones se suman a las que ya llevas. Si importas el mismo archivo otra vez, no se duplica.",
                         color = c.text2, fontSize = 14.sp,
                     )
                     Spacer(Modifier.height(12.dp))
@@ -108,62 +119,96 @@ fun ImportScreen(a: UiActions) {
                     summary?.let { Text(it, color = c.accent, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp)) }
                 }
             }
-            if (unmatched.isNotEmpty()) {
-                item {
-                    Text("Sin empatar (${unmatched.size}) · toca para elegir la canción", color = c.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+            if (links.isNotEmpty() || discarded.isNotEmpty()) item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.CheckCircle, null, tint = c.accent)
+                    Text(
+                        "  ${links.size} canciones unidas" + if (discarded.isEmpty()) " · se empataron todas" else " · ${discarded.size} descartadas",
+                        color = c.text, fontSize = 15.sp,
+                    )
                 }
-                items(unmatched, key = { it.id }) { u ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { pick = u }.padding(vertical = 10.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            }
+            if (discarded.isNotEmpty()) {
+                item {
+                    Column {
+                        Text("Descartadas (${discarded.size})", color = c.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                        Text(discarded.first().reason ?: ImportMatcher.NO_CANDIDATE, color = c.text2, fontSize = 13.sp)
+                        Text("No hace falta hacer nada. Si alguna sí está en tu teléfono, toca Unir.", color = c.text3, fontSize = 12.sp)
+                    }
+                }
+                items(discarded, key = { "d" + it.id }) { u ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { pick = u }.padding(vertical = 8.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(u.title, color = c.text, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${u.artist.ifBlank { "—" }} · ${u.plays} reproducciones" + if (u.favorite) " · favorito" else "", color = c.text2, fontSize = 12.sp)
+                            Text("${u.artist.ifBlank { "—" }} · ${u.plays} reproducciones", color = c.text2, fontSize = 12.sp)
                         }
                         SmallButton("Unir") { pick = u }
                     }
                 }
-            } else if (summary != null) item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.CheckCircle, null, tint = c.accent)
-                    Text("  Todas las filas quedaron empatadas.", color = c.text)
+            }
+            if (probable.isNotEmpty()) {
+                item {
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { showLinks = !showLinks }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Revisar uniones (opcional)", color = c.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("${probable.size} se eligieron entre varias canciones parecidas. Si alguna quedó mal, tócala para cambiarla.", color = c.text2, fontSize = 13.sp)
+                        }
+                        Text(if (showLinks) "Ocultar" else "Ver", color = c.accent, fontSize = 14.sp)
+                    }
+                }
+                if (showLinks) items(probable, key = { "l" + it.rowId }) { l ->
+                    val t = lib.byKey[l.key]
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { fix = l }.padding(vertical = 8.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(l.title, color = c.text, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "→ ${t?.title ?: l.key.substringAfterLast('/')}" + (t?.let { " · " + it.displayArtist + if (it.isVideo) " · video" else "" } ?: "") + " · ${l.plays}",
+                                color = c.text2, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        SmallButton("Cambiar") { fix = l }
+                    }
                 }
             }
         }
     }
-    pick?.let { u -> MatchDialog(u) { pick = null } }
+    pick?.let { u ->
+        MatchDialog(CsvRow(u.title, u.artist, u.plays, u.favorite), onPick = { k -> scope.launch { g.backup.matchManually(u, k) } }, onDiscard = { scope.launch { g.backup.dismissUnmatched(u) } }) { pick = null }
+    }
+    fix?.let { l -> MatchDialog(CsvRow(l.title, l.artist, l.plays, false), onPick = { k -> scope.launch { g.backup.relink(l, k) } }, onDiscard = null) { fix = null } }
 }
 
 @Composable
-private fun MatchDialog(u: ImportUnmatched, onDismiss: () -> Unit) {
-    val g = MusicApp.graph
+private fun MatchDialog(row: CsvRow, onPick: (String) -> Unit, onDiscard: (() -> Unit)?, onDismiss: () -> Unit) {
     val c = LocalAppColors.current
-    val scope = rememberCoroutineScope()
     val lib = libraryState()
     var q by remember { mutableStateOf("") }
-    val sugg = remember(u, q, lib) {
-        if (q.isBlank()) ImportCore.suggestions(CsvRow(u.title, u.artist, u.plays, u.favorite), lib.songs)
-        else { val f = NameCleaner.fold(q); lib.songs.filter { it.search.contains(f) }.take(30) }
+    val all = remember(lib) { lib.songs + lib.allVideos }
+    val sugg = remember(row, q, all) {
+        if (q.isBlank()) ImportCore.suggestions(row, all)
+        else { val f = NameCleaner.fold(q); all.filter { it.search.contains(f) }.take(30) }
     }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.bg2,
-        title = { Text("¿Cuál es \"${u.title}\"?", color = c.text, fontSize = 18.sp) },
+        title = { Text("¿Cuál es \"${row.title}\"?", color = c.text, fontSize = 18.sp) },
         text = {
             Column {
                 OutlinedTextField(q, { q = it }, singleLine = true, placeholder = { Text("Buscar canción…") }, modifier = Modifier.fillMaxWidth())
                 LazyColumn(Modifier.heightIn(max = 360.dp)) {
                     items(sugg, key = { it.id }) { t ->
-                        Row(Modifier.fillMaxWidth().clickable { scope.launch { g.backup.matchManually(u, t.key) }; onDismiss() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().clickable { onPick(t.key); onDismiss() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             ArtImage(t, Modifier.size(40.dp))
                             Column(Modifier.padding(start = 10.dp)) {
                                 Text(t.title, color = c.text, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(t.displayArtist, color = c.text2, fontSize = 12.sp, maxLines = 1)
+                                Text(t.displayArtist + if (t.isVideo) " · video" else "", color = c.text2, fontSize = 12.sp, maxLines = 1)
                             }
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { scope.launch { g.backup.dismissUnmatched(u) }; onDismiss() }) { Text("Descartar fila", color = c.text2) } },
+        confirmButton = { if (onDiscard != null) TextButton(onClick = { onDiscard(); onDismiss() }) { Text("Quitar de la lista", color = c.text2) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar", color = c.text2) } },
     )
 }

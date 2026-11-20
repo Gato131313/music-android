@@ -38,6 +38,7 @@ import kotlinx.serialization.json.Json
 @Serializable data class BkPair(val a: String, val b: String)
 @Serializable data class BkHidden(val path: String, val folder: Boolean)
 @Serializable data class BkKV(val k: String, val v: String)
+@Serializable data class BkLink(val id: String, val key: String, val title: String = "", val artist: String = "", val plays: Int = 0, val how: String = "MANO")
 
 @Serializable
 data class BackupFile(
@@ -58,6 +59,7 @@ data class BackupFile(
     val songFx: List<BkKV> = emptyList(),
     val eqPresets: List<BkKV> = emptyList(),
     val importManual: List<BkKV> = emptyList(),
+    val importLinks: List<BkLink> = emptyList(),
 )
 
 /** Respaldo completo de los datos del usuario (no incluye los archivos de música). */
@@ -81,7 +83,7 @@ class BackupManager(private val g: AppGraph) {
             hidden = db.user().hidden().first().map { BkHidden(it.path, it.isFolder) },
             songFx = db.user().songFx().first().map { BkKV(it.key, it.preset) },
             eqPresets = db.user().eqPresets().first().map { BkKV(it.name, it.gains) },
-            importManual = db.stats().manualNow().map { BkKV(it.rowId, it.key) },
+            importLinks = db.stats().manualNow().map { BkLink(it.rowId, it.key, it.title, it.artist, it.plays, it.how) },
         )
     }
 
@@ -114,6 +116,7 @@ class BackupManager(private val g: AppGraph) {
             b.songFx.forEach { db.user().upsertSongFx(SongFx(it.k, it.v)) }
             b.eqPresets.forEach { db.user().upsertEqPreset(EqPreset(it.k, it.v)) }
             b.importManual.forEach { db.stats().upsertManual(ImportManual(it.k, it.v)) }
+            b.importLinks.forEach { db.stats().upsertManual(ImportManual(it.id, it.key, it.title, it.artist, it.plays, it.how)) }
         }
         if (b.settings.isNotBlank()) g.settings.import(b.settings)
         b
@@ -144,16 +147,33 @@ class BackupManager(private val g: AppGraph) {
     }
 
     // ---------- Importar CSV de la app anterior ----------
+    private fun tracks() = g.library.library.value.let { it.songs + it.allVideos }
+
+    /** Clave de memoria de cada fila (la n-ésima fila idéntica lleva su número). */
+    private fun ids(rows: List<CsvRow>, start: Map<String, Int> = emptyMap()): List<String> {
+        val seen = HashMap(start)
+        return rows.map { r -> val id = ImportCore.rowId(r); ImportCore.manualId(r, seen.merge(id, 1, Int::plus)!! - 1) }
+    }
+
+    private fun linkOf(id: String, l: Link) = ImportManual(id, l.track.key, l.row.title, l.row.artist, l.row.plays, l.how.name)
+
     suspend fun importCsv(ctx: Context, uri: Uri): ImportResult = withContext(Dispatchers.IO) {
         val text = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() }
         val rows = ImportCore.parseCsv(text)
         require(rows.isNotEmpty()) { "el archivo no trae filas de canciones" }
-        require(g.library.library.value.songs.isNotEmpty()) { "tu biblioteca aún está cargando, inténtalo en unos segundos" }
-        val manual = g.db.stats().manualNow().associate { it.rowId to it.key }
-        val res = ImportCore.match(rows, g.library.library.value.songs, manual)
+        val tracks = tracks()
+        require(tracks.isNotEmpty()) { "tu biblioteca aún está cargando, inténtalo en unos segundos" }
+        val manual = g.db.stats().manualNow().filter { it.how == How.MANO.name }.associate { it.rowId to it.key }
+        val res = ImportCore.match(rows, tracks, manual)
+        val rowIds = ids(rows)
         applyImport(res.plays, res.favorites)
-        g.db.stats().clearUnmatched()
-        g.db.stats().insertUnmatched(res.unmatched.map { ImportUnmatched(title = it.title, artist = it.artist, plays = it.plays, favorite = it.favorite) })
+        val db = g.db
+        db.withTransaction {
+            db.stats().clearAutoLinks()
+            db.stats().upsertManuals(res.assignment.links.filter { it.how != How.MANO }.map { linkOf(rowIds[it.index], it) })
+            db.stats().clearUnmatched()
+            db.stats().insertUnmatched(res.assignment.discarded.map { d -> ImportUnmatched(title = d.row.title, artist = d.row.artist, plays = d.row.plays, favorite = d.row.favorite, reason = d.reason) })
+        }
         res
     }
 
@@ -168,7 +188,58 @@ class BackupManager(private val g: AppGraph) {
         }
     }
 
-    /** Empatar a mano una fila que no se encontró. */
+    data class Rematch(val total: Int, val linked: Int, val discarded: List<Pair<String, String>>)
+
+    /**
+     * Filas que quedaron pendientes en una importación de una versión anterior: se empatan solas, sin volver a
+     * importar el archivo. Solo SUMA las de esas filas (lo ya importado no se toca) y cada fila se procesa una vez.
+     */
+    suspend fun rematchPending(): Rematch? = withContext(Dispatchers.IO) {
+        val db = g.db
+        val pend = db.stats().pendingNow()
+        val tracks = tracks()
+        if (pend.isEmpty() || tracks.isEmpty()) return@withContext null
+        val rows = pend.map { CsvRow(it.title, it.artist, it.plays, it.favorite) }
+        // 1 a 1: las canciones que ya recibieron reproducciones de la importación anterior no se ofrecen
+        val taken = db.stats().statsNow().filter { it.importedPlays > 0 }.map { it.key }.toSet()
+        val first = ImportMatcher.assign(rows, tracks, taken = taken)
+        // Si alguna fila solo tenía canciones ya tomadas, a su más probable (no se deja pendiente)
+        val again = first.discarded.map { it.index }
+        val second = if (again.isEmpty()) null else ImportMatcher.assign(again.map { rows[it] }, tracks)
+        val links = first.links + second?.links.orEmpty().map { it.copy(index = again[it.index], how = How.PROBABLE) }
+        val discarded = second?.discarded.orEmpty().map { it.copy(index = again[it.index]) }
+        db.withTransaction {
+            val existing = db.stats().manualNow().groupingBy { it.rowId.substringBeforeLast('#') }.eachCount()
+            val rowIds = ids(rows, existing)
+            for (l in links) {
+                val s = db.stats().stat(l.track.key) ?: PlayStat(l.track.key)
+                db.stats().upsertStat(s.copy(importedPlays = s.importedPlays + l.row.plays))
+                db.stats().upsertManual(linkOf(rowIds[l.index], l))
+                if (l.row.favorite) db.user().upsertFavorite(Favorite(l.track.key))
+                db.stats().deleteUnmatched(pend[l.index].id)
+            }
+            for (d in discarded) {
+                db.stats().deleteUnmatched(pend[d.index].id)
+                db.stats().insertUnmatched(listOf(pend[d.index].copy(id = 0, reason = d.reason)))
+            }
+        }
+        Rematch(rows.size, links.size, discarded.map { it.row.title to it.reason })
+    }
+
+    /** Corregir una unión automática: mueve sus reproducciones a otra canción y la recuerda como elegida a mano. */
+    suspend fun relink(link: ImportManual, key: String) {
+        if (link.key == key) return
+        val db = g.db
+        db.withTransaction {
+            val old = db.stats().stat(link.key)
+            if (old != null) db.stats().upsertStat(old.copy(importedPlays = (old.importedPlays - link.plays).coerceAtLeast(0)))
+            val s = db.stats().stat(key) ?: PlayStat(key)
+            db.stats().upsertStat(s.copy(importedPlays = s.importedPlays + link.plays))
+            db.stats().upsertManual(link.copy(key = key, how = How.MANO.name))
+        }
+    }
+
+    /** Unir a mano una fila descartada (opcional). */
     suspend fun matchManually(row: ImportUnmatched, key: String) {
         val db = g.db
         db.withTransaction {
@@ -177,7 +248,7 @@ class BackupManager(private val g: AppGraph) {
             // Recordar la unión: si se importa el mismo archivo otra vez, esta fila ya cae aquí y no se duplica
             val r = CsvRow(row.title, row.artist, row.plays, row.favorite)
             val n = db.stats().manualNow().count { it.rowId.startsWith(ImportCore.rowId(r) + "#") }
-            db.stats().upsertManual(ImportManual(ImportCore.manualId(r, n), key))
+            db.stats().upsertManual(ImportManual(ImportCore.manualId(r, n), key, row.title, row.artist, row.plays, How.MANO.name))
             if (row.favorite) db.user().upsertFavorite(Favorite(key))
             db.stats().deleteUnmatched(row.id)
         }

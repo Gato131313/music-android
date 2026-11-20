@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vista previa para Android 8–11 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="250dp" android:height="110dp" android:drawable="@drawable/widget_preview_bg" />
+    <item android:width="84dp" android:height="84dp" android:left="13dp" android:top="13dp" android:drawable="@drawable/widget_preview_cover" />
+    <item android:width="36dp" android:height="36dp" android:left="37dp" android:top="37dp" android:drawable="@drawable/ic_u_mark" />
+    <item android:width="40dp" android:height="40dp" android:left="150dp" android:top="58dp" android:drawable="@drawable/widget_btn_bg" />
+    <item android:width="22dp" android:height="22dp" android:left="159dp" android:top="67dp" android:drawable="@drawable/ic_w_play" />
+</layer-list>

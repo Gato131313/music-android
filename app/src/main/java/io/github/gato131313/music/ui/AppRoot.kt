@@ -89,6 +89,7 @@ import io.github.gato131313.music.ui.screens.libraryState
 import io.github.gato131313.music.ui.theme.LocalAppColors
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
@@ -206,6 +207,9 @@ fun AppRoot(startRoute: String? = null) {
                 composable("review") { ReviewScreen(actions) }
                 composable("smart/{id}") {
                     val id = it.arguments?.getString("id") ?: ""
+                    // Se recalcula en vivo cuando cambian las reproducciones
+                    val liveStats by g.user.stats.collectAsState()
+                    @Suppress("UNUSED_VARIABLE") val tick = liveStats.size
                     val tracks = when (id) {
                         "favoritos" -> g.user.favoriteTracks(lib)
                         "anadidas" -> g.user.recentlyAdded(lib)
@@ -247,6 +251,30 @@ fun AppRoot(startRoute: String? = null) {
         NavRequests.route.collect { r -> if (r != null) { NavRequests.route.value = null; actions.navigate(r) } }
     }
     if (sleepOpen.value) SleepTimerDialog { sleepOpen.value = false }
+    // Al actualizar: las filas que quedaron pendientes en una importación anterior se empatan solas
+    val rematch = remember { mutableStateOf<io.github.gato131313.music.data.backup.BackupManager.Rematch?>(null) }
+    LaunchedEffect(Unit) {
+        g.library.libraryOrNull.first { it != null && it.songs.isNotEmpty() }
+        rematch.value = runCatching { g.backup.rematchPending() }.getOrNull()
+    }
+    rematch.value?.let { r ->
+        val c = LocalAppColors.current
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { rematch.value = null },
+            containerColor = c.bg2,
+            title = { Text("Reproducciones de tu app anterior", color = c.text) },
+            text = {
+                Text(
+                    "Las ${r.total} canciones que habían quedado sin empatar ya se revisaron solas. " +
+                        io.github.gato131313.music.ui.screens.importSummary(r.total, r.linked, r.discarded) +
+                        "\n\nNo tienes que hacer nada. Si alguna quedó mal, puedes cambiarla en Importar datos.",
+                    color = c.text2, fontSize = 14.sp,
+                )
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { rematch.value = null }) { Text("Listo", color = c.accent) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { rematch.value = null; actions.navigate("import") }) { Text("Revisar", color = c.text2) } },
+        )
+    }
     update?.let { r ->
         val c = LocalAppColors.current
         androidx.compose.material3.AlertDialog(

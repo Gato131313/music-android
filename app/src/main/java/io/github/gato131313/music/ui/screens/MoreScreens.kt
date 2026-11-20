@@ -1,5 +1,7 @@
 package io.github.gato131313.music.ui.screens
 
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,6 +104,34 @@ fun LinkRow(title: String, subtitle: String? = null, onClick: () -> Unit) {
             if (subtitle != null) Text(subtitle, color = c.text2, fontSize = 13.sp)
         }
         Icon(Icons.AutoMirrored.Rounded.ArrowForwardIos, null, tint = c.text3, modifier = Modifier.size(14.dp))
+    }
+}
+
+/** Elegir el estilo del widget: Portada, Cristal o Mínimo. */
+@Composable
+fun WidgetStyleRow(current: String, onChange: (String) -> Unit) {
+    val c = LocalAppColors.current
+    Column(Modifier.padding(vertical = 4.dp)) {
+        Text("Estilo", color = c.text, fontSize = 16.sp)
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                Triple("portada", "Portada", "Portada difuminada"),
+                Triple("cristal", "Cristal", "Color de la portada"),
+                Triple("minimo", "Mínimo", "Oscuro"),
+            ).forEach { (k, name, hint) ->
+                val sel = current == k
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                        .background(if (sel) c.accent.copy(alpha = 0.22f) else c.text.copy(alpha = 0.06f))
+                        .clickable { onChange(k) }.padding(vertical = 10.dp, horizontal = 8.dp)
+                        .semantics(mergeDescendants = true) { contentDescription = "Estilo $name" + if (sel) ", elegido" else "" },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(name, color = if (sel) c.accent else c.text, fontSize = 15.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                    Text(hint, color = c.text2, fontSize = 11.sp, maxLines = 1)
+                }
+            }
+        }
     }
 }
 
@@ -254,6 +284,7 @@ fun SettingsScreen(a: UiActions) {
             }
             item {
                 Card("Biblioteca") {
+                    SwitchRow("Mostrar reproducciones 🎧", "El número de veces que escuchaste cada canción, a la derecha de cada fila", s.showPlays) { v -> set { it.copy(showPlays = v) } }
                     SliderRow("Ignorar audios cortos", s.minDurationSec.toFloat(), 0f..120f, 11, if (s.minDurationSec == 0) "No" else "< ${s.minDurationSec} s") { v -> set { it.copy(minDurationSec = (v / 10).toInt() * 10) } }
                     LinkRow("Escanear medios", "Buscar canciones y videos nuevos en todo el teléfono") { a.navigate("action/scan") }
                     LinkRow("Revisar nombres", "Unir artistas repetidos y corregir nombres") { a.navigate("review") }
@@ -263,6 +294,13 @@ fun SettingsScreen(a: UiActions) {
             item {
                 Card("Letras") {
                     SwitchRow("Traducir al español", "Muestra la traducción debajo de cada línea", s.translateLyrics) { v -> set { it.copy(translateLyrics = v) } }
+                }
+            }
+            item {
+                Card("Widget de pantalla de inicio") {
+                    WidgetStyleRow(s.widgetStyle) { v -> set { it.copy(widgetStyle = v) } }
+                    SliderRow("Opacidad del fondo", s.widgetOpacity, 0.3f..1f, 13, "${(s.widgetOpacity * 100).toInt()} %") { v -> set { it.copy(widgetOpacity = v) } }
+                    LinkRow("Agregar widget", "Se puede agrandar o achicar arrastrando sus orillas") { a.navigate("widgets") }
                 }
             }
             item {

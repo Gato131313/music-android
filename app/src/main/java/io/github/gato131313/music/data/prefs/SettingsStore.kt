@@ -49,6 +49,12 @@ data class Settings(
     val keepScreenOnDriver: Boolean = true,
     val resumeOnHeadset: Boolean = true,
     val checkUpdates: Boolean = true,
+    /** Contador 🎧 de reproducciones en cada fila. */
+    val showPlays: Boolean = true,
+    /** Widget: "portada" (portada difuminada), "cristal" (color de la portada) o "minimo" (oscuro). */
+    val widgetStyle: String = "cristal",
+    /** Widget: opacidad del fondo 0.3–1. */
+    val widgetOpacity: Float = 0.92f,
     val lastUpdateCheck: Long = 0,
     val deviceId: String = "",
     val firstRunDone: Boolean = false,

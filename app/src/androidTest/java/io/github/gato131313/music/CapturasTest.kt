@@ -2,6 +2,8 @@ package io.github.gato131313.music
 
 import android.content.Intent
 import android.util.Log
+import androidx.compose.ui.unit.dp
+import androidx.room.withTransaction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -343,35 +345,33 @@ class CapturasTest {
     private fun check(ok: Boolean, what: String) = note((if (ok) "OK    " else "FALLA ") + what)
 
     /**
-     * Simula el CSV sacado del video de la app vieja: título tal cual lo mostraba (etiqueta o nombre de archivo),
-     * cortado con "…" si era largo, artista de la etiqueta o "<unknown>". Lo importa por la pantalla real
-     * (selector de archivos de Android), reimporta, une a mano y comprueba que las sumas no se dupliquen.
+     * Imita la biblioteca y el CSV del hermano: 980 filas tomadas de canciones y videos del teléfono, como las
+     * mostraba la app vieja (etiqueta o nombre de archivo, cortado con "…" en ~618 filas, artista o "<unknown>"),
+     * con audio+video de la misma canción, grupos que se ven iguales ("Rauw Alejandro - Topic…") y 3 notas de voz.
      */
     private fun importarCsvComoAppVieja(lib: io.github.gato131313.music.data.model.Library) {
         val ctx = inst.targetContext
         val g = MusicApp.graph
-        val pick = lib.songs.shuffled(java.util.Random(11)).take(60)
-        fun oldTitle(t: io.github.gato131313.music.data.model.Track): String {
-            val raw = t.rawTitle?.takeIf { it.isNotBlank() } ?: t.fileName.substringBeforeLast('.')
-            return if (raw.length > 24) raw.take(22).trimEnd() + "…" else raw
-        }
+        val all = (lib.songs + lib.allVideos).filter { !it.path.contains("/DCIM/") }
+        val pick = all.shuffled(java.util.Random(11)).take(977)
+        fun shown(t: io.github.gato131313.music.data.model.Track) = t.rawTitle?.takeIf { it.isNotBlank() } ?: t.fileName.substringBeforeLast('.')
+        val lens = pick.map { shown(it).length }.sorted()
+        val cut = lens[lens.size - 618]
+        fun oldTitle(t: io.github.gato131313.music.data.model.Track): String { val s = shown(t); return if (s.length >= cut) s.take(cut - 2).trimEnd() + "…" else s }
         fun q(s: String) = "\"" + s.replace("\"", "\"\"") + "\""
         val sb = StringBuilder("titulo,artista,reproducciones\n")
-        pick.forEachIndexed { i, t ->
-            val art = t.rawArtist?.takeIf { it.isNotBlank() } ?: "<unknown>"
-            sb.append(q(oldTitle(t))).append(',').append(q(art)).append(',').append(300 - i * 4).append('\n')
-        }
-        // La misma fila vista dos veces con otro número (audio y video, o dos canciones con el mismo título cortado)
-        val twin = pick[10]
-        sb.append(q(oldTitle(twin))).append(',').append(q(twin.rawArtist?.takeIf { it.isNotBlank() } ?: "<unknown>")).append(",7\n")
-        sb.append("Cancion Inventada,Nadie,9\nOtra Que No Existe…,<unknown>,4\n")
+        pick.forEachIndexed { i, t -> sb.append(q(oldTitle(t))).append(',').append(q(t.rawArtist?.takeIf { it.isNotBlank() } ?: "<unknown>")).append(',').append(985 - i).append('\n') }
+        for (n in listOf(101, 100, 99)) sb.append("grabando #$n,<unknown>,1\n")
         val csv = sb.toString()
-        note("CSV de prueba (${pick.size + 2} filas), primeras líneas:\n" + csv.lines().take(12).joinToString("\n"))
+        val rows = io.github.gato131313.music.data.backup.ImportCore.parseCsv(csv)
+        val looks = rows.groupBy { it.title.lowercase() + "|" + it.artist.lowercase() }.filter { it.value.size > 1 }
+        note("CSV simulado: filas=${rows.size} cortadas=${rows.count { it.title.endsWith("…") }} grupos_que_se_ven_iguales=${looks.size} (${looks.values.sumOf { it.size }} filas), canciones+videos en el teléfono=${all.size}")
+        looks.keys.take(6).forEach { note("  se ven iguales: $it ×${looks[it]!!.size}") }
 
         // 1) Antes de importar, algunas canciones ya tienen reproducciones propias en la app nueva
-        val own = pick.take(5)
+        val own = pick.filter { !it.isVideo }.take(5)
         kotlinx.coroutines.runBlocking { own.forEach { t -> repeat(3) { g.user.recordPlay(t, 60_000) } } }
-        val before = pick.associate { it.key to total(it.key) }
+        val before = all.associate { it.key to total(it.key) }
 
         // 2) Guardar el CSV en Descargas e importarlo por la pantalla, con el selector de archivos
         val resolver = ctx.contentResolver
@@ -393,63 +393,220 @@ class CapturasTest {
                 f = d.wait(Until.findObject(By.textStartsWith("reproducciones_prueba")), 6000)
             }
             if (f != null) {
-                shot("60b_selector", 300)
                 f.click()
-                viaUi = d.wait(Until.hasObject(By.textStartsWith("Listo:")), 20000)
-            } else {
-                shot("60b_selector_sin_archivo", 300)
-                d.pressBack()
-            }
+                viaUi = d.wait(Until.hasObject(By.textStartsWith("Listo.")), 60000)
+            } else { shot("60b_selector_sin_archivo", 300); d.pressBack() }
         }
         note("importado por la pantalla con el selector de Android: $viaUi")
         if (!viaUi) kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
-        d.findObject(By.textStartsWith("Listo:"))?.let { note("mensaje en pantalla: ${it.text}") }
+        d.findObject(By.textStartsWith("Listo."))?.let { note("mensaje en pantalla: ${it.text}") }
         shot("61_importar_resultado", 1500)
 
+        val t0 = System.currentTimeMillis()
         val r1 = kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
-        note("importar: filas=${r1.rows} empatadas=${r1.rows - r1.unmatched.size} canciones=${r1.plays.size} sin_empatar=${r1.unmatched.size}")
-        r1.unmatched.forEach { u -> note("  sin empatar: ${u.title} / ${u.artist}") }
-        val after1 = pick.associate { it.key to total(it.key) }
-        val expected = pick.associate { t -> t.key to (before[t.key] ?: 0) + (r1.plays[t.key] ?: 0) }
-        check(after1 == expected, "se SUMAN a las propias (ej. ${own[0].title}: ${before[own[0].key]} propias + ${r1.plays[own[0].key]} importadas = ${after1[own[0].key]})")
-        val wrong = pick.filterIndexed { i, t -> r1.plays[t.key] != null && r1.plays[t.key] != 300 - i * 4 }
-        check(r1.plays[twin.key] == null && r1.unmatched.count { it.plays == 7 || it.plays == 260 } == 2, "filas que se ven iguales no se suman solas: quedan las 2 para unir a mano")
-        check(wrong.isEmpty(), "cada canción recibió el número de SU fila (mal: ${wrong.map { it.title }})")
+        val a = r1.assignment
+        val how = a.links.groupingBy { it.how }.eachCount()
+        val exact = a.links.count { l -> pick.getOrNull(l.index)?.key == l.track.key }
+        val pairSwap = a.links.count { l -> val tr = pick.getOrNull(l.index); tr != null && tr.key != l.track.key && (tr.pairId == l.track.id || l.track.pairId == tr.id) }
+        val sameLook = a.links.count { l -> val tr = pick.getOrNull(l.index); tr != null && tr.key != l.track.key && !(tr.pairId == l.track.id || l.track.pairId == tr.id) && shown(tr).take(cut - 2) == shown(l.track).take(cut - 2) }
+        val shared = a.links.groupBy { it.track.key }.count { it.value.size > 1 }
+        note("EMPATE: filas=${r1.rows} empatadas=${a.links.size} SIN_EMPATAR=${a.discarded.size} ${a.discarded.map { it.row.title }} (tardó ${System.currentTimeMillis() - t0} ms)")
+        note("  seguras=${how[io.github.gato131313.music.data.backup.How.SEGURO]} probables=${how[io.github.gato131313.music.data.backup.How.PROBABLE]} compartidas=$shared")
+        note("  a su archivo exacto=$exact · audio/video de la misma canción intercambiados=$pairSwap · nombres idénticos intercambiados=$sameLook · otra canción=${a.links.size - exact - pairSwap - sameLook}")
+        a.links.filter { l -> val tr = pick.getOrNull(l.index); tr != null && tr.key != l.track.key && !(tr.pairId == l.track.id || l.track.pairId == tr.id) }.take(15)
+            .forEach { l -> note("    \"${l.row.title}\" -> ${l.track.fileName} (era ${pick[l.index].fileName})") }
+        check(a.discarded.map { it.row.title } == listOf("grabando #101", "grabando #100", "grabando #99"), "solo se descartan las 3 notas de voz")
+        check(a.links.size == 977 && shared == 0, "las 977 canciones quedan empatadas, 1 a 1")
+        val after1 = all.associate { it.key to total(it.key) }
+        val expected = all.associate { t -> t.key to (before[t.key] ?: 0) + (r1.plays[t.key] ?: 0) }
+        check(after1 == expected, "se SUMAN a las propias (ej. ${own[0].title}: ${before[own[0].key]} propias -> ${after1[own[0].key]})")
 
         // 3) Importar el mismo archivo otra vez: no se duplica
         kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
-        val after2 = pick.associate { it.key to total(it.key) }
-        check(after2 == after1, "reimportar el mismo archivo no duplica")
+        check(all.associate { it.key to total(it.key) } == after1, "reimportar el mismo archivo no duplica")
 
-        // 4) Después sigue contando normal
-        kotlinx.coroutines.runBlocking { g.user.recordPlay(own[0], 60_000) }
-        check(total(own[0].key) == after2[own[0].key]!! + 1, "una reproducción nueva suma 1 (${after2[own[0].key]} -> ${total(own[0].key)})")
+        // 4) Su caso: importó con la versión anterior y le quedaron 80 sin empatar. Al actualizar se empatan solas.
+        val db = g.db
+        val probables = a.links.filter { it.how == io.github.gato131313.music.data.backup.How.PROBABLE }
+        val pend = (probables + a.links.filter { it.how != io.github.gato131313.music.data.backup.How.PROBABLE && it.row.title.endsWith("…") }).take(80)
+        kotlinx.coroutines.runBlocking {
+            db.withTransaction {
+                for (l in pend) {
+                    val s = db.stats().stat(l.track.key)!!
+                    db.stats().upsertStat(s.copy(importedPlays = s.importedPlays - l.row.plays))
+                }
+                db.stats().clearAutoLinks()
+                db.stats().clearUnmatched()
+                db.stats().insertUnmatched(pend.map { io.github.gato131313.music.data.db.ImportUnmatched(title = it.row.title, artist = it.row.artist, plays = it.row.plays, favorite = false) })
+            }
+        }
+        val sumBefore = all.sumOf { total(it.key) }
+        note("simulado: versión anterior con ${pend.size} filas sin empatar (${pend.sumOf { it.row.plays }} reproducciones pendientes)")
+        launch(); Thread.sleep(4000)
+        val dlg = d.wait(Until.findObject(By.textContains("ya se revisaron solas")), 20000)
+        note("aviso al abrir: ${dlg?.text}")
+        shot("62_aviso_tras_actualizar", 500)
+        check(dlg?.text?.contains("Se empataron todas") == true, "el aviso dice \"Se empataron todas\"")
+        val left = kotlinx.coroutines.runBlocking { db.stats().pendingNow() }
+        val sumAfter = all.sumOf { total(it.key) }
+        check(left.isEmpty(), "no queda ninguna pendiente (${left.size})")
+        check(sumAfter - sumBefore == pend.sumOf { it.row.plays }, "se sumaron exactamente las ${pend.sumOf { it.row.plays }} reproducciones pendientes (${sumAfter - sumBefore})")
+        click(By.text("Listo"))
+        launch(); Thread.sleep(5000)
+        check(d.findObject(By.textContains("ya se revisaron solas")) == null && all.sumOf { total(it.key) } == sumAfter, "al abrir otra vez no se repite ni se duplica")
 
-        // 5) Unir a mano una pendiente desde la pantalla y reimportar
-        launch("import"); shot("62_pendientes", 2000)
-        val pend = kotlinx.coroutines.runBlocking { g.db.stats().unmatchedNow() }
-            .filter { it.title != "Cancion Inventada" && !it.title.startsWith("Otra Que") }
-        if (pend.isNotEmpty()) {
-            val u = pend.first()
-            d.wait(Until.findObject(By.text(u.title)), 5000)?.click()
-            shot("63_unir_dialogo", 1500)
-            val target = io.github.gato131313.music.data.backup.ImportCore.suggestions(
-                io.github.gato131313.music.data.backup.CsvRow(u.title, u.artist, u.plays, false), g.library.library.value.songs,
-            ).first()
-            val opt = d.wait(Until.findObject(By.text(target.title)), 4000)
-            val t0 = total(target.key)
-            if (opt != null) opt.click() else kotlinx.coroutines.runBlocking { g.backup.matchManually(u, target.key) }
+        // 5) Corregir (opcional) una unión automática
+        launch("import"); Thread.sleep(2000)
+        click(By.text("Ver")); shot("63_revisar_uniones", 1500)
+        val links = kotlinx.coroutines.runBlocking { db.stats().manualNow() }.filter { it.how == "PROBABLE" }
+        if (links.isNotEmpty()) {
+            val l = links.maxBy { it.plays }
+            val sug = io.github.gato131313.music.data.backup.ImportCore.suggestions(io.github.gato131313.music.data.backup.CsvRow(l.title, l.artist, l.plays, false), lib.songs + lib.allVideos).first { it.key != l.key }
+            val a0 = total(l.key); val b0 = total(sug.key)
+            kotlinx.coroutines.runBlocking { g.backup.relink(l, sug.key) }
+            check(total(l.key) == a0 - l.plays && total(sug.key) == b0 + l.plays, "corregir mueve las ${l.plays} reproducciones a la otra canción")
+            kotlinx.coroutines.runBlocking { g.backup.relink(l.copy(key = sug.key, how = "MANO"), l.key) }
+        }
+        launch("smart/mas"); shot("64_mas_reproducidas", 2500)
+    }
+
+    /** Dibuja el widget fuera de la pantalla de inicio a un tamaño dado (dp) y lo devuelve como imagen. */
+    @OptIn(androidx.glance.appwidget.ExperimentalGlanceRemoteViewsApi::class)
+    private fun renderWidget(state: io.github.gato131313.music.widget.WidgetState, wDp: Int, hDp: Int): android.graphics.Bitmap {
+        val ctx = inst.targetContext
+        val rv = kotlinx.coroutines.runBlocking {
+            androidx.glance.appwidget.GlanceRemoteViews().compose(ctx, androidx.compose.ui.unit.DpSize(wDp.dp, hDp.dp)) {
+                io.github.gato131313.music.widget.WidgetContent(ctx, state)
+            }.remoteViews
+        }
+        val dens = ctx.resources.displayMetrics.density
+        val w = (wDp * dens).toInt(); val h = (hDp * dens).toInt()
+        var bmp: android.graphics.Bitmap? = null
+        inst.runOnMainSync {
+            val parent = android.widget.FrameLayout(ctx)
+            val v = rv.apply(ctx, parent)
+            parent.addView(v, android.widget.FrameLayout.LayoutParams(w, h))
+            parent.measure(android.view.View.MeasureSpec.makeMeasureSpec(w, android.view.View.MeasureSpec.EXACTLY), android.view.View.MeasureSpec.makeMeasureSpec(h, android.view.View.MeasureSpec.EXACTLY))
+            parent.layout(0, 0, w, h)
+            val b = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+            val cv = android.graphics.Canvas(b)
+            // Las esquinas redondeadas del sistema se aplican al recortar: las imitamos aquí
+            val path = android.graphics.Path().apply { addRoundRect(0f, 0f, w.toFloat(), h.toFloat(), 22 * dens, 22 * dens, android.graphics.Path.Direction.CW) }
+            cv.clipPath(path)
+            parent.draw(cv)
+            bmp = b
+        }
+        return bmp!!
+    }
+
+    /** Hoja con todos los tamaños de un estilo, sobre un fondo de pantalla de inicio. */
+    private fun widgetSheet(style: String, name: String) {
+        val ctx = inst.targetContext
+        val g = MusicApp.graph
+        val state = kotlinx.coroutines.runBlocking { io.github.gato131313.music.widget.MusicWidget.load(ctx, style) }
+        val sizes = listOf("2x1" to (130 to 60), "3x1" to (200 to 60), "4x1" to (290 to 60), "4x2" to (290 to 130), "4x3" to (290 to 210), "4x4" to (290 to 300))
+        val dens = ctx.resources.displayMetrics.density
+        val pad = (16 * dens).toInt()
+        val bitmaps = sizes.map { (n, s) -> n to renderWidget(state, s.first, s.second) }
+        val sheetW = (290 * dens).toInt() + pad * 2
+        val sheetH = bitmaps.sumOf { it.second.height + pad + (18 * dens).toInt() } + pad
+        val sheet = android.graphics.Bitmap.createBitmap(sheetW, sheetH, android.graphics.Bitmap.Config.ARGB_8888)
+        val cv = android.graphics.Canvas(sheet)
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        p.shader = android.graphics.LinearGradient(0f, 0f, 0f, sheetH.toFloat(), 0xFF3B5B7A.toInt(), 0xFF1D2A3A.toInt(), android.graphics.Shader.TileMode.CLAMP)
+        cv.drawRect(0f, 0f, sheetW.toFloat(), sheetH.toFloat(), p)
+        p.shader = null; p.color = android.graphics.Color.WHITE; p.textSize = 13 * dens
+        var y = pad
+        for ((n, b) in bitmaps) {
+            cv.drawText("$name · $n", pad.toFloat(), y + 12 * dens, p)
+            y += (18 * dens).toInt()
+            cv.drawBitmap(b, pad.toFloat(), y.toFloat(), null)
+            y += b.height + pad
+        }
+        val f = java.io.File(ctx.getExternalFilesDir("widget"), "widget_$style.png")
+        f.outputStream().use { sheet.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        d.executeShellCommand("cp ${f.absolutePath} $out/7${"pcm".indexOf(style.first())}_widget_$style.png")
+        note("widget $style: ${state.title} / ${state.artist} · sonando=${state.playing} · tamaños ${sizes.joinToString { it.first }} -> ${f.name}")
+    }
+
+    @Test
+    fun g_fase7() {
+        d.executeShellCommand("mkdir -p $out")
+        val ctx = inst.targetContext
+        val g = MusicApp.graph
+        val lib = SessionProbe.awaitLibrary()
+        // Canción sin portada propia (para comprobar el fotograma del video o la portada generada)
+        val noArt = lib.songs.filter { it.pairId == null }.firstOrNull { io.github.gato131313.music.playback.ArtProvider.real(ctx, it, lib, 128) == null }
+        val withVideo = lib.songs.firstOrNull { it.hasVideo && io.github.gato131313.music.playback.ArtProvider.real(ctx, it.copy(pairId = null), lib, 128) == null }
+        note("sin portada: ${noArt?.fileName} · sin portada pero con video: ${withVideo?.fileName}")
+
+        step("contador en listas y en vivo") {
+            val t = noArt ?: lib.songs.first()
+            val n0 = g.user.playsOf(t, lib)
+            launch("songs"); shot("70_canciones_contador", 2500)
+            inst.runOnMainSync { g.player.play(listOf(t), 0) }
+            Thread.sleep(2500)
+            launch("smart/mas"); shot("71_mas_reproducidas_antes", 1500)
+            Thread.sleep(33_000) // escuchar de verdad: cuenta a los 30 s
+            shot("72_mas_reproducidas_despues", 1000)
+            val n1 = kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500); g.user.playsOf(t, lib, g.db.stats().statsNow().associateBy { it.key }) }
+            check(n1 == n0 + 1, "al escuchar 30 s el contador sube solo: ${t.title} $n0 -> $n1")
+            val shownText = d.findObject(By.desc("$n1 reproducciones"))
+            check(shownText != null, "la fila muestra 🎧 $n1 en vivo")
+            val mas = g.user.mostPlayed(lib).take(30).map { g.user.playsOf(it, lib) }
+            check(mas == mas.sortedDescending(), "Más reproducidas va de mayor a menor (${mas.take(8)})")
+            kotlinx.coroutines.runBlocking { g.settings.update { it.copy(showPlays = false) } }
+            launch("songs"); shot("73_canciones_sin_contador", 2000)
+            check(d.findObject(By.descContains(" reproducciones")) == null, "el interruptor de Ajustes oculta el contador")
+            kotlinx.coroutines.runBlocking { g.settings.update { it.copy(showPlays = true) } }
+            launch("settings"); d.wait(Until.findObject(By.textContains("Mostrar reproducciones")), 5000); shot("74_ajustes_contador", 1000)
+        }
+
+        step("notificacion con portada y botones") {
+            val t = withVideo ?: noArt ?: lib.songs.first()
+            inst.runOnMainSync { g.player.play(listOf(t, lib.songs[1], lib.songs[2]), 0) }
+            Thread.sleep(3000)
+            d.pressHome(); Thread.sleep(1500)
+            d.openNotification(); Thread.sleep(2500)
+            shot("75_notificacion", 500)
+            val like = d.findObject(By.desc("Me gusta"))
+            note("botón Me gusta en la notificación: ${like != null} · aleatorio: ${d.findObject(By.descStartsWith("Aleatorio")) != null}")
+            val fav0 = g.user.isFavorite(t.key)
+            like?.click(); Thread.sleep(1500)
+            check(like != null && g.user.isFavorite(t.key) != fav0, "\"Me gusta\" desde la notificación marca la canción")
+            d.findObject(By.descStartsWith("Aleatorio"))?.click(); Thread.sleep(1200)
+            check(kotlinx.coroutines.runBlocking { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { g.hub.player?.shuffleModeEnabled } } == true, "aleatorio desde la notificación")
+            shot("76_notificacion_tras_botones", 800)
+            d.pressBack()
+            d.openQuickSettings(); Thread.sleep(2500); shot("77_panel_controles", 500); d.pressBack(); d.pressBack()
+            // Pantalla de bloqueo
+            d.sleep(); Thread.sleep(1500); d.wakeUp(); Thread.sleep(2500)
+            shot("78_pantalla_bloqueo", 500)
+            d.executeShellCommand("wm dismiss-keyguard"); Thread.sleep(1500)
+            val meta = d.executeShellCommand("dumpsys media_session").lines().filter { it.contains("metadata") || it.contains("description=") }.take(4)
+            note("sesión del sistema: " + meta.joinToString(" | ").take(400))
+        }
+
+        step("widget tamaños y estilos") {
+            for ((st, name) in listOf("portada" to "Portada", "cristal" to "Cristal", "minimo" to "Mínimo")) widgetSheet(st, name)
+            // Sin música sonando: muestra la última canción
+            inst.runOnMainSync { g.hub.player?.pause() }
             Thread.sleep(1500)
-            note("unida a mano: \"${u.title}\" -> ${target.title} (+${u.plays}) por pantalla=${opt != null}")
-            val t1 = total(target.key)
-            check(t1 == t0 + u.plays, "unir a mano suma sus reproducciones ($t0 -> $t1)")
-            val r3 = kotlinx.coroutines.runBlocking { g.backup.importCsv(ctx, uri) }
-            check(total(target.key) == t1, "tras reimportar, la unida a mano conserva su suma sin duplicar ($t1 -> ${total(target.key)})")
-            check(r3.unmatched.size == r1.unmatched.size - 1, "la unida a mano ya no sale como pendiente (${r1.unmatched.size} -> ${r3.unmatched.size})")
-            launch("import"); shot("64_tras_unir", 2000)
-        } else note("no hubo pendientes reales para unir a mano")
-        launch("smart/mas"); shot("65_mas_reproducidas", 2500)
-        launch("stats"); Thread.sleep(2000); click(By.text("Todo")); shot("66_estadisticas", 2500)
+            val idle = kotlinx.coroutines.runBlocking { io.github.gato131313.music.widget.MusicWidget.load(ctx) }
+            check(idle.hasTrack && !idle.playing, "en pausa el widget muestra la última canción (${idle.title}) con botón de play")
+            launch("settings"); d.wait(Until.findObject(By.text("Widget de pantalla de inicio")), 5000)
+            d.findObject(By.text("Widget de pantalla de inicio"))?.let { d.findObject(By.scrollable(true))?.let { s -> androidx.test.uiautomator.UiScrollable(androidx.test.uiautomator.UiSelector().scrollable(true)).scrollTextIntoView("Opacidad del fondo") } }
+            shot("79_ajustes_widget", 1200)
+            // Ponerlo de verdad en la pantalla de inicio
+            launch("widgets"); click(By.text("Agregar a la pantalla de inicio")); Thread.sleep(2500)
+            shot("7a_pin_dialogo", 300)
+            (d.findObject(By.text("Add")) ?: d.findObject(By.text("Agregar")) ?: d.findObject(By.textContains("Add automatically")))?.click()
+            Thread.sleep(2500); d.pressHome(); Thread.sleep(3000)
+            shot("7b_inicio_con_widget", 500)
+            val ids = kotlinx.coroutines.runBlocking { androidx.glance.appwidget.GlanceAppWidgetManager(ctx).getGlanceIds(io.github.gato131313.music.widget.MusicWidget::class.java) }
+            note("widgets puestos en la pantalla de inicio: ${ids.size}")
+        }
+        saveLog("informe7.txt")
     }
 
     @Test

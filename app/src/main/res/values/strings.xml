@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MUSIC</string>
-    <string name="widget_desc">Canción actual y controles</string>
+    <string name="widget_desc">Canción actual y controles. Agrándalo o achícalo arrastrando sus orillas.</string>
+    <string name="widget_preview_title">Tu canción</string>
+    <string name="widget_preview_artist">MUSIC</string>
 </resources>
