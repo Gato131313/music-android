@@ -188,15 +188,15 @@ private fun Cover(ctx: Context, s: WidgetState, sizeDp: Int, corner: Int) {
 
 @Composable
 private fun Small(ctx: Context, s: WidgetState) {
-    val h = LocalSize.current.height
-    val cover = (h.value - 12).toInt().coerceIn(36, 64)
-    Row(GlanceModifier.fillMaxSize().padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    val size = LocalSize.current
+    val cover = min(size.height.value - 10, size.width.value - 84).toInt().coerceIn(30, 64)
+    val btn = if (size.width.value < 150) 34 else 40
+    Row(GlanceModifier.fillMaxSize().padding(5.dp), verticalAlignment = Alignment.CenterVertically) {
         Cover(ctx, s, cover, 12)
         Spacer(GlanceModifier.defaultWeight())
-        PlayPause(ctx, s, 40)
-        Spacer(GlanceModifier.width(6.dp))
-        MediaBtn(ctx, R.drawable.ic_w_next, "Siguiente", KeyEvent.KEYCODE_MEDIA_NEXT, 36)
-        Spacer(GlanceModifier.width(4.dp))
+        PlayPause(ctx, s, btn)
+        Spacer(GlanceModifier.width(2.dp))
+        MediaBtn(ctx, R.drawable.ic_w_next, "Siguiente", KeyEvent.KEYCODE_MEDIA_NEXT, btn - 4)
     }
 }
 
@@ -238,28 +238,35 @@ private fun Medium(ctx: Context, s: WidgetState, twoRows: Boolean) {
 @Composable
 private fun Large(ctx: Context, s: WidgetState) {
     val size = LocalSize.current
-    val cover = min(size.width.value - 32, size.height.value - 150).toInt().coerceIn(72, 260)
-    Column(GlanceModifier.fillMaxSize().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(GlanceModifier.defaultWeight())
-        Cover(ctx, s, cover, 20)
-        Spacer(GlanceModifier.height(10.dp))
-        Text(s.title, maxLines = 1, style = TextStyle(color = WHITE, fontSize = 17.sp, fontWeight = FontWeight.Bold))
-        Text(s.artist, maxLines = 1, style = TextStyle(color = WHITE2, fontSize = 13.sp))
-        Spacer(GlanceModifier.height(8.dp))
-        Progress(s)
-        Row(GlanceModifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            Chrono(s)
-            Spacer(GlanceModifier.defaultWeight())
-            Text(fmt(s.durMs), style = TextStyle(color = WHITE3, fontSize = 11.sp))
+    val tall = size.height.value >= 280
+    Column(GlanceModifier.fillMaxSize().padding(12.dp)) {
+        if (tall) {
+            // Portada grande arriba
+            val cover = min(size.width.value - 24, size.height.value - 24 - 44 - 26 - 50 - 12).toInt().coerceIn(80, 300)
+            Row(GlanceModifier.fillMaxWidth().defaultWeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalAlignment = Alignment.CenterVertically) {
+                Cover(ctx, s, cover, 20)
+            }
+            Spacer(GlanceModifier.height(8.dp))
+            TitleRow(s)
+        } else {
+            // Portada a la izquierda, título, artista y "me gusta" a la derecha
+            val cover = (size.height.value - 24 - 26 - 50 - 8).toInt().coerceIn(56, 140)
+            Row(GlanceModifier.fillMaxWidth().defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
+                Cover(ctx, s, cover, 18)
+                Spacer(GlanceModifier.width(12.dp))
+                Column(GlanceModifier.defaultWeight()) { TitleRow(s) }
+            }
         }
-        Spacer(GlanceModifier.height(4.dp))
-        Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Toggle(R.drawable.ic_n_shuffle_on.takeIf { s.shuffle } ?: R.drawable.ic_n_shuffle, if (s.shuffle) "Aleatorio activado" else "Aleatorio", WidgetAction.SHUFFLE)
+        Spacer(GlanceModifier.height(6.dp))
+        Progress(s)
+        Chrono(s)
+        Row(GlanceModifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
+            Toggle(if (s.shuffle) R.drawable.ic_n_shuffle_on else R.drawable.ic_n_shuffle, if (s.shuffle) "Aleatorio activado" else "Aleatorio", WidgetAction.SHUFFLE)
             Spacer(GlanceModifier.defaultWeight())
             MediaBtn(ctx, R.drawable.ic_w_prev, "Anterior", KeyEvent.KEYCODE_MEDIA_PREVIOUS, 40)
-            Spacer(GlanceModifier.width(8.dp))
-            PlayPause(ctx, s, 52)
-            Spacer(GlanceModifier.width(8.dp))
+            Spacer(GlanceModifier.width(6.dp))
+            PlayPause(ctx, s, 48)
+            Spacer(GlanceModifier.width(6.dp))
             MediaBtn(ctx, R.drawable.ic_w_next, "Siguiente", KeyEvent.KEYCODE_MEDIA_NEXT, 40)
             Spacer(GlanceModifier.defaultWeight())
             Toggle(
@@ -267,10 +274,17 @@ private fun Large(ctx: Context, s: WidgetState) {
                 when (s.repeat) { 1 -> "Repetir una"; 2 -> "Repetir todo"; else -> "Repetir" }, WidgetAction.REPEAT,
             )
         }
-        Row(GlanceModifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Toggle(if (s.favorite) R.drawable.ic_n_heart_on else R.drawable.ic_n_heart, if (s.favorite) "Quitar de me gusta" else "Me gusta", WidgetAction.LIKE)
+    }
+}
+
+@Composable
+private fun TitleRow(s: WidgetState) {
+    Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(GlanceModifier.defaultWeight()) {
+            Text(s.title, maxLines = 2, style = TextStyle(color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Bold))
+            Text(s.artist, maxLines = 1, style = TextStyle(color = WHITE2, fontSize = 13.sp))
         }
-        Spacer(GlanceModifier.defaultWeight())
+        Toggle(if (s.favorite) R.drawable.ic_n_heart_on else R.drawable.ic_n_heart, if (s.favorite) "Quitar de me gusta" else "Me gusta", WidgetAction.LIKE)
     }
 }
 
@@ -289,7 +303,7 @@ private fun Progress(s: WidgetState) {
 @Composable
 private fun Chrono(s: WidgetState) {
     val rv = RemoteViews(MusicApp.graph.app.packageName, R.layout.widget_chrono).apply {
-        setChronometer(R.id.chrono, SystemClock.elapsedRealtime() - s.posMs, null, s.playing)
+        setChronometer(R.id.chrono, SystemClock.elapsedRealtime() - s.posMs, "%s / " + fmt(s.durMs), s.playing)
     }
     AndroidRemoteViews(rv)
 }

@@ -123,7 +123,7 @@ fun ImportScreen(a: UiActions) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.CheckCircle, null, tint = c.accent)
                     Text(
-                        "  ${links.size} canciones unidas" + if (discarded.isEmpty()) " · se empataron todas" else " · ${discarded.size} descartadas",
+                        if (discarded.isEmpty()) "  Se empataron todas las canciones" else "  Se empataron todas menos ${discarded.size} (sin ninguna canción parecida)",
                         color = c.text, fontSize = 15.sp,
                     )
                 }

@@ -410,11 +410,15 @@ fun WidgetsScreen(a: UiActions) {
                         Icon(androidx.compose.ui.res.painterResource(io.github.gato131313.music.R.drawable.ic_u_mark), null, tint = Color.White, modifier = Modifier.size(30.dp))
                     }
                     Column(Modifier.padding(start = 12.dp)) {
-                        Text("Canción actual", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("Tu canción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         Text("Anterior · Reproducir · Siguiente", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
                     }
                 }
-                Text("Muestra la portada y los controles; se actualiza solo al cambiar de canción.", color = c.text2, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
+                Text(
+                    "Agrándalo o achícalo arrastrando sus orillas: chico (portada y play), mediano (con título y progreso) o grande " +
+                        "(con aleatorio, repetir y me gusta). El fondo toma el color de la portada; el estilo y la transparencia se eligen en Ajustes.",
+                    color = c.text2, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp),
+                )
                 Spacer(Modifier.height(12.dp))
                 Box(
                     Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(24.dp)).background(c.accent).clickable {

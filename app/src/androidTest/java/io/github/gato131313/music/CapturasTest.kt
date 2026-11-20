@@ -541,18 +541,19 @@ class CapturasTest {
         note("sin portada: ${noArt?.fileName} · sin portada pero con video: ${withVideo?.fileName}")
 
         step("contador en listas y en vivo") {
-            val t = noArt ?: lib.songs.first()
-            val n0 = g.user.playsOf(t, lib)
             launch("songs"); shot("70_canciones_contador", 2500)
+            val t = g.user.mostPlayed(lib).first()
+            val n0 = g.user.playsOf(t, lib)
+            launch("smart/mas"); Thread.sleep(2000)
             inst.runOnMainSync { g.player.play(listOf(t), 0) }
-            Thread.sleep(2500)
-            launch("smart/mas"); shot("71_mas_reproducidas_antes", 1500)
+            Thread.sleep(1500)
+            shot("71_mas_reproducidas_antes", 500)
+            check(d.findObject(By.desc("$n0 reproducciones")) != null, "la fila de ${t.title} muestra 🎧 $n0")
             Thread.sleep(33_000) // escuchar de verdad: cuenta a los 30 s
-            shot("72_mas_reproducidas_despues", 1000)
-            val n1 = kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500); g.user.playsOf(t, lib, g.db.stats().statsNow().associateBy { it.key }) }
-            check(n1 == n0 + 1, "al escuchar 30 s el contador sube solo: ${t.title} $n0 -> $n1")
-            val shownText = d.findObject(By.desc("$n1 reproducciones"))
-            check(shownText != null, "la fila muestra 🎧 $n1 en vivo")
+            shot("72_mas_reproducidas_despues", 1500)
+            val n1 = g.user.playsOf(t, lib, kotlinx.coroutines.runBlocking { g.db.stats().statsNow() }.associateBy { it.key })
+            check(n1 == n0 + 1, "al escuchar 30 s sube solo: ${t.title} $n0 -> $n1")
+            check(d.findObject(By.desc("$n1 reproducciones")) != null, "la misma pantalla muestra 🎧 $n1 sin recargar")
             val mas = g.user.mostPlayed(lib).take(30).map { g.user.playsOf(it, lib) }
             check(mas == mas.sortedDescending(), "Más reproducidas va de mayor a menor (${mas.take(8)})")
             kotlinx.coroutines.runBlocking { g.settings.update { it.copy(showPlays = false) } }
@@ -580,9 +581,12 @@ class CapturasTest {
             d.pressBack()
             d.openQuickSettings(); Thread.sleep(2500); shot("77_panel_controles", 500); d.pressBack(); d.pressBack()
             // Pantalla de bloqueo
-            d.sleep(); Thread.sleep(1500); d.wakeUp(); Thread.sleep(2500)
+            d.executeShellCommand("locksettings set-disabled false")
+            d.sleep(); Thread.sleep(2000); d.wakeUp(); Thread.sleep(3000)
             shot("78_pantalla_bloqueo", 500)
+            note("pantalla de bloqueo: ${d.executeShellCommand("dumpsys window").lines().firstOrNull { it.contains("mDreamingLockscreen") || it.contains("isKeyguardShowing") || it.contains("mShowingLockscreen") }?.trim()}")
             d.executeShellCommand("wm dismiss-keyguard"); Thread.sleep(1500)
+            d.executeShellCommand("locksettings set-disabled true")
             val meta = d.executeShellCommand("dumpsys media_session").lines().filter { it.contains("metadata") || it.contains("description=") }.take(4)
             note("sesión del sistema: " + meta.joinToString(" | ").take(400))
         }
@@ -594,13 +598,14 @@ class CapturasTest {
             Thread.sleep(1500)
             val idle = kotlinx.coroutines.runBlocking { io.github.gato131313.music.widget.MusicWidget.load(ctx) }
             check(idle.hasTrack && !idle.playing, "en pausa el widget muestra la última canción (${idle.title}) con botón de play")
-            launch("settings"); d.wait(Until.findObject(By.text("Widget de pantalla de inicio")), 5000)
-            d.findObject(By.text("Widget de pantalla de inicio"))?.let { d.findObject(By.scrollable(true))?.let { s -> androidx.test.uiautomator.UiScrollable(androidx.test.uiautomator.UiSelector().scrollable(true)).scrollTextIntoView("Opacidad del fondo") } }
+            launch("settings"); Thread.sleep(1500)
+            if (d.findObject(By.text("Ajustes")) == null) { d.pressBack(); Thread.sleep(800); launch("settings"); Thread.sleep(1500) }
+            runCatching { androidx.test.uiautomator.UiScrollable(androidx.test.uiautomator.UiSelector().scrollable(true)).scrollTextIntoView("Opacidad del fondo") }
             shot("79_ajustes_widget", 1200)
             // Ponerlo de verdad en la pantalla de inicio
             launch("widgets"); click(By.text("Agregar a la pantalla de inicio")); Thread.sleep(2500)
             shot("7a_pin_dialogo", 300)
-            (d.findObject(By.text("Add")) ?: d.findObject(By.text("Agregar")) ?: d.findObject(By.textContains("Add automatically")))?.click()
+            (d.findObject(By.textStartsWith("Add")) ?: d.findObject(By.textStartsWith("Agregar a la pantalla")))?.click()
             Thread.sleep(2500); d.pressHome(); Thread.sleep(3000)
             shot("7b_inicio_con_widget", 500)
             val ids = kotlinx.coroutines.runBlocking { androidx.glance.appwidget.GlanceAppWidgetManager(ctx).getGlanceIds(io.github.gato131313.music.widget.MusicWidget::class.java) }
